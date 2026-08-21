@@ -55,4 +55,37 @@ test.describe("mindmap editor canvas", () => {
     await page.goto(`/mindmaps/${mindmapId}`);
     await expect(page.getByText("E2E Child", { exact: true })).toBeVisible();
   });
+
+  test("edits the root, creates nested children, and restores titles after reload", async ({ page }) => {
+    const email = `node-edit-${Date.now()}@example.test`;
+    await page.goto("/login");
+    await page.getByRole("button", { name: "회원가입" }).click();
+    await page.getByLabel("이메일").fill(email);
+    await page.getByLabel("비밀번호", { exact: true }).fill("password123");
+    await page.getByLabel("비밀번호 확인").fill("password123");
+    await page.getByRole("button", { name: "계정 만들기" }).click();
+    await page.getByRole("button", { name: "+ 새 마인드맵" }).click();
+
+    const rootInput = page.getByLabel("노드 제목");
+    await expect(rootInput).toBeFocused();
+    await rootInput.fill("루트 개념");
+    await rootInput.press("Enter");
+    await expect(page.getByText("루트 개념", { exact: true })).toBeVisible();
+
+    await page.getByLabel("루트 개념에 자식 노드 추가").click();
+    const childInput = page.getByLabel("노드 제목");
+    await expect(childInput).toBeFocused();
+    await childInput.fill("첫 번째 자식");
+    await childInput.press("Enter");
+    await page.getByLabel("첫 번째 자식에 자식 노드 추가").click();
+    const grandchildInput = page.getByLabel("노드 제목");
+    await grandchildInput.fill("손자 노드");
+    await grandchildInput.press("Enter");
+
+    await page.reload();
+    await expect(page.getByText("루트 개념", { exact: true })).toBeVisible();
+    await expect(page.getByText("첫 번째 자식", { exact: true })).toBeVisible();
+    await expect(page.getByText("손자 노드", { exact: true })).toBeVisible();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+  });
 });

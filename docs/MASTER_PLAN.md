@@ -353,7 +353,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 06. Node 생성과 제목 편집 규칙 — ⬜ TODO
+## 06. Node 생성과 제목 편집 규칙 — ✅ DONE
 
 ### Goal
 
@@ -392,6 +392,25 @@ DEFERRED TO 12 / NOT VERIFIED
 - component test: 초기 root focus, Enter/Esc/double click, IME 조합 중 Enter 보호, 빈 값 복원
 - Playwright: 생성 직후 root 즉시 입력→다단계 child 생성→이름 변경→reload 복원
 - lint, typecheck, test, build 및 실제 키보드/한글 입력 확인
+
+### Execution Record (2026-08-21)
+
+- Backend: 소유 Mindmap의 child 생성과 `revision` 조건부 title update service를 transaction으로 구현하고, parent의 동일 Mindmap 소속·제목·유한 좌표·소유권을 검증했다. 생성/수정 시 Mindmap `updatedAt`도 함께 갱신한다.
+- API: `POST /api/mindmaps/:mindmapId/nodes`와 `PATCH /api/nodes/:nodeId`를 추가했다. 둘 다 DB session, same-origin, UUID/Zod 입력 검증을 적용하며 비소유/미존재 리소스는 404, revision 충돌은 409로 반환한다.
+- Frontend: root 초기 auto focus/전체 선택, 모든 node의 `[+]`, `새 노드` 생성 직후 Edit Mode, controlled inline input, Enter/Esc/double click, IME Enter 보호, 빈 제목 복원, 실패 draft·재시도를 구현했다.
+- 위치 규칙: parent 오른쪽 240px에서 `0, +96, -96, +192, -192...` 순서로 기존 형제가 차지하지 않은 첫 slot을 선택해 자동 layout 없이 결정적 배치를 제공한다.
+- 순서 보호: server revision 조건 갱신과 client sequence/synchronous in-flight lock을 함께 적용하고, mutation 중 충돌 가능한 다른 node 편집·생성을 잠가 늦은 응답이 새 편집 상태를 덮지 않게 했다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(17 files/62 tests), `npm run build`, `npx playwright test --list`(4 files/5 tests).
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 child 생성·다른 map parent·타 사용자·revision conflict integration test 실행
+- 실제 브라우저에서 root 한글 즉시 입력→다단계 child 생성→제목 변경→reload 복원 Playwright 실행
+- 실제 키보드/IME, focus/caret, 시각 배치와 browser console 확인
+- 사유: Docker engine이 실행 중이지 않아 DB 기반 integration/E2E 환경을 기동할 수 없음
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 06을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성됐으며 실행 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -703,6 +722,7 @@ DEFERRED TO 12 / NOT VERIFIED
 | 03 | NOT VERIFIED | 실제 DB auth integration, cookie/session E2E, 가입→Dashboard→logout Playwright, 브라우저 시각 확인 |
 | 04 | NOT VERIFIED | 실제 DB Dashboard integration, 가입→목록·연속 생성·최소 Editor·이름 변경 Playwright, reload 영속성·브라우저 시각/console 확인 |
 | 05 | NOT VERIFIED | 실제 DB Editor detail/integrity integration, node·edge 선택·Pan·Zoom·Fit View Playwright, 좌표·관계 reload 및 브라우저 시각/console 확인 |
+| 06 | NOT VERIFIED | 실제 DB child/title/revision integration, root 한글 즉시 편집→다단계 child→reload Playwright, focus·IME·기본 배치·브라우저 시각/console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -717,7 +737,7 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 03. 인증 및 접근 제어 | ✅ DONE | 가입·로그인·로그아웃·session·접근 제어와 S01 UI 구현 |
 | 04. Dashboard와 Mindmap 기본 수명주기 | ✅ DONE | 목록·자동 생성·열기·이름 변경과 최소 Editor 진입 구현 |
 | 05. Editor 캔버스 기반 | ✅ DONE | 소유권 기반 Node/Edge 조회와 선택·Pan·Zoom·Fit View 구현 |
-| 06. Node 생성·제목 편집 | ⬜ TODO | root 즉시 편집과 child 생성·수정 |
+| 06. Node 생성·제목 편집 | ✅ DONE | root 즉시 편집과 child 생성·revision 기반 제목 수정 구현 |
 | 07. 이동·접기/펼치기 | ⬜ TODO | 자유 배치와 렌더 범위 제어·복원 |
 | 08. Markdown 상세 UI | ⬜ TODO | 패널·미리보기·전체화면 집중 편집 |
 | 09. 자동저장·오류 복구 | ⬜ TODO | 2초 debounce, 저장 상태, retry, draft 보호 |
@@ -726,10 +746,10 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 5
+- 완료: 6
 - 진행 중: 0
 - 차단: 0
-- 남음: 7
+- 남음: 6
 
 ## Decision Log
 
@@ -761,6 +781,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-19 | 05 | tree 무결성을 렌더 전 O(n) 검증 | 자기 참조 FK만으로는 parent가 같은 Mindmap에 속함을 보장하지 못하므로 잘못된 edge와 순환 구조를 client에 전달하지 않기 위함 |
 | 2026-08-19 | 05 | node drag/connect/delete를 명시적으로 비활성화 | 06·07 API가 없는 상태에서 저장되지 않는 편집처럼 보이는 사용자 조작을 허용하지 않기 위함 |
 | 2026-08-19 | 05 | React Flow 상태는 adapter 결과와 selected node local state만 제어 | 현재 단계의 읽기·탐색 요구를 충족하면서 미래 편집 기능을 위한 전역 store를 선제 도입하지 않기 위함 |
+| 2026-08-21 | 06 | child 기본 위치를 오른쪽 240px·세로 96px 대칭 slot으로 결정 | 자유 배치 정책을 유지하면서 신규 형제의 초기 겹침을 결정적으로 줄이고 기존 node를 재배치하지 않기 위함 |
+| 2026-08-21 | 06 | title mutation은 server revision과 client sequence·즉시 lock을 함께 사용 | 오래된 요청을 DB에서 거부하고 동일 render frame의 중복 제출과 늦은 client 응답의 상태 덮어쓰기를 동시에 막기 위함 |
+| 2026-08-21 | 06 | node 제목 blur는 저장이 아닌 취소로 처리 | 확정 문서의 Enter 저장·Esc 취소 규칙을 단일 저장 경계로 유지하고 의도하지 않은 focus 이동 저장을 피하기 위함 |
 
 ## Surprises & Discoveries
 

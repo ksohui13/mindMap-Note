@@ -22,6 +22,11 @@ export type UpdateNodeInput = {
   isCollapsed?: boolean;
 };
 
+export type CreateOwnedChildNodeResult = {
+  node: Node;
+  mindmapUpdatedAt: Date;
+};
+
 export async function createChildNode(
   input: CreateChildNodeInput,
   client: PrismaClient = prisma,
@@ -62,6 +67,58 @@ export async function createChildNode(
     if (error instanceof DomainError) {
       throw error;
     }
+    return mapPrismaError(error);
+  }
+}
+
+export async function createChildNodeForUser(
+  input: CreateChildNodeInput,
+  userId: string,
+  client: PrismaClient = prisma,
+): Promise<CreateOwnedChildNodeResult> {
+  assertFinitePosition(input.x, input.y);
+  const title = normalizeTitle(input.title);
+
+  try {
+    return await client.$transaction(async (transaction) => {
+      const mindmap = await transaction.mindmap.findFirst({
+        where: { id: input.mindmapId, userId },
+        select: { id: true },
+      });
+      if (!mindmap) {
+        throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+      }
+
+      const parent = await transaction.node.findUnique({
+        where: { id: input.parentNodeId },
+        select: { mindmapId: true },
+      });
+      if (!parent || parent.mindmapId !== mindmap.id) {
+        throw new DomainError(
+          "DATA_INTEGRITY",
+          "Parent node must belong to the same mindmap.",
+        );
+      }
+
+      const node = await transaction.node.create({
+        data: {
+          mindmapId: mindmap.id,
+          parentNodeId: input.parentNodeId,
+          title,
+          x: input.x,
+          y: input.y,
+        },
+      });
+      await touchMindmap(mindmap.id, transaction);
+      const updatedMindmap = await transaction.mindmap.findUniqueOrThrow({
+        where: { id: mindmap.id },
+        select: { updatedAt: true },
+      });
+
+      return { node, mindmapUpdatedAt: updatedMindmap.updatedAt };
+    });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
     return mapPrismaError(error);
   }
 }
@@ -122,6 +179,46 @@ export function updateNodeTitle(
   client: PrismaClient = prisma,
 ): Promise<Node> {
   return updateNode(nodeId, { title }, client);
+}
+
+export async function updateNodeTitleForUser(
+  nodeId: string,
+  userId: string,
+  title: string,
+  revision: number,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  const normalizedTitle = normalizeTitle(title);
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw new DomainError("INVALID_INPUT", "Node revision must be a non-negative integer.");
+  }
+
+  try {
+    return await client.$transaction(async (transaction) => {
+      const existing = await transaction.node.findFirst({
+        where: { id: nodeId, mindmap: { userId } },
+        select: { id: true, mindmapId: true },
+      });
+      if (!existing) {
+        throw new DomainError("NOT_FOUND", "Node was not found.");
+      }
+
+      const result = await transaction.node.updateMany({
+        where: { id: nodeId, revision },
+        data: { title: normalizedTitle, revision: { increment: 1 } },
+      });
+      if (result.count === 0) {
+        throw new DomainError("CONFLICT", "Node was changed by another request.");
+      }
+
+      const updated = await transaction.node.findUniqueOrThrow({ where: { id: nodeId } });
+      await touchMindmap(existing.mindmapId, transaction);
+      return updated;
+    });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    return mapPrismaError(error);
+  }
 }
 
 export async function deleteNodeSubtree(

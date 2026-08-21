@@ -19,7 +19,10 @@ const detail: MindmapDetailResponse = {
 
 function renderEditor(initialData?: MindmapDetailResponse, initialRootSelection = false) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+      mutations: { retry: false },
+    },
   });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -78,5 +81,110 @@ describe("MindmapEditor", () => {
     expect(screen.getByLabelText("마인드맵 불러오는 중")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "마인드맵을 불러오지 못했습니다" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+  });
+
+  it("opens the newly created root in edit mode with its title selected", () => {
+    renderEditor(detail, true);
+
+    const input = screen.getByLabelText("노드 제목") as HTMLInputElement;
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("시작");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(2);
+  });
+
+  it("creates a child at a deterministic position and immediately edits it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      node: {
+        id: "new-child",
+        parentNodeId: "root",
+        title: "새 노드",
+        x: 240,
+        y: 0,
+        isCollapsed: false,
+        revision: 0,
+      },
+      mindmapUpdatedAt: "2026-08-21T00:00:00.000Z",
+    }), { status: 201, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(detail);
+
+    const addButton = screen.getByLabelText("시작에 자식 노드 추가");
+    fireEvent.click(addButton);
+    fireEvent.click(addButton);
+
+    const input = await screen.findByLabelText("노드 제목");
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("새 노드");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      parentNodeId: "root",
+      title: "새 노드",
+      x: 240,
+      y: 0,
+    });
+    expect(document.querySelector('[data-id="new-child"]')).not.toBeNull();
+  });
+
+  it("keeps child creation actionable after a server failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "노드 생성 실패" } }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    )));
+    renderEditor(detail);
+
+    fireEvent.click(screen.getByLabelText("시작에 자식 노드 추가"));
+
+    expect(await screen.findByText("노드 생성 실패")).toBeInTheDocument();
+    expect(screen.getByText("다시 시도")).toBeInTheDocument();
+    expect(screen.queryByLabelText("노드 제목")).not.toBeInTheDocument();
+  });
+
+  it("edits with Enter, cancels with Escape, and protects IME composition", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      node: { ...detail.nodes[1], title: "변경", revision: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(detail);
+
+    fireEvent.doubleClick(screen.getByText("자식"));
+    let input = screen.getByLabelText("노드 제목");
+    fireEvent.change(input, { target: { value: "취소할 제목" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByLabelText("노드 제목")).not.toBeInTheDocument();
+    expect(screen.getByText("자식")).toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByText("자식"));
+    input = screen.getByLabelText("노드 제목");
+    fireEvent.change(input, { target: { value: "변경" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true, keyCode: 229 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", isComposing: false, keyCode: 13 });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: false, keyCode: 13 });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText("변경")).toBeInTheDocument());
+  });
+
+  it("restores a blank title and keeps a failed draft available for retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "저장 실패" } }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(detail);
+
+    fireEvent.doubleClick(screen.getByText("자식"));
+    const input = screen.getByLabelText("노드 제목");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue("자식");
+    expect(screen.getByText("노드 제목을 입력해 주세요.")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "유지할 초안" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("저장 실패")).toBeInTheDocument());
+    expect(input).toHaveValue("유지할 초안");
+    expect(screen.getByText("다시 시도")).toBeInTheDocument();
   });
 });

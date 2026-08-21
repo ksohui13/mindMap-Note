@@ -7,6 +7,8 @@ export {
 } from "./mindmap.service";
 export {
   createChildNode,
+  createChildNodeForUser,
   deleteNodeSubtree,
   updateNode,
+  updateNodeTitleForUser,
 } from "./node.service";
