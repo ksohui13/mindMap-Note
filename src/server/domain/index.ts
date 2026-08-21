@@ -10,5 +10,7 @@ export {
   createChildNodeForUser,
   deleteNodeSubtree,
   updateNode,
+  updateNodeCollapseForUser,
+  updateNodePositionForUser,
   updateNodeTitleForUser,
 } from "./node.service";

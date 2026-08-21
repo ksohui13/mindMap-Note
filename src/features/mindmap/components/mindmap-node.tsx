@@ -80,24 +80,64 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
         <p className={`truncate text-sm font-extrabold ${data.isRoot ? "text-white" : "text-[var(--foreground)]"}`}>{data.title}</p>
       )}
       {data.isRoot ? <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-violet-100">Root</p> : null}
-      <button
-        type="button"
-        aria-label={`${data.title}에 자식 노드 추가`}
-        disabled={data.isInteractionDisabled}
-        onClick={(event) => {
-          event.stopPropagation();
-          data.onAddChild?.(id);
-        }}
-        className={`nodrag mt-2 inline-grid size-7 place-items-center rounded-full text-base font-black transition disabled:cursor-wait disabled:opacity-60 ${
-          data.isRoot ? "bg-white/20 text-white hover:bg-white/30" : "bg-violet-100 text-[var(--primary)] hover:bg-violet-200"
-        }`}
-      >
-        {data.isCreatingChild ? "…" : "+"}
-      </button>
+      <div className="nodrag mt-2 flex items-center justify-center gap-1.5">
+        {data.hasChildren ? (
+          <button
+            type="button"
+            aria-label={`${data.title} 하위 트리 ${data.isCollapsed ? "펼치기" : "접기"}`}
+            disabled={data.isInteractionDisabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              data.onToggleCollapse?.(id);
+            }}
+            className={`inline-grid size-7 place-items-center rounded-full text-xs font-black transition disabled:cursor-wait disabled:opacity-60 ${
+              data.isRoot ? "bg-white/20 text-white hover:bg-white/30" : "bg-violet-100 text-[var(--primary)] hover:bg-violet-200"
+            }`}
+          >
+            {data.isCollapsed ? "▸" : "▾"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          aria-label={`${data.title}에 자식 노드 추가`}
+          title={data.isCollapsed ? "하위 트리를 펼친 뒤 자식 노드를 추가해 주세요." : undefined}
+          disabled={data.isInteractionDisabled || data.isCollapsed}
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onAddChild?.(id);
+          }}
+          className={`inline-grid size-7 place-items-center rounded-full text-base font-black transition disabled:cursor-not-allowed disabled:opacity-60 ${
+            data.isRoot ? "bg-white/20 text-white hover:bg-white/30" : "bg-violet-100 text-[var(--primary)] hover:bg-violet-200"
+          }`}
+        >
+          {data.isCreatingChild ? "…" : "+"}
+        </button>
+      </div>
       {data.childCreateError ? (
         <div role="alert" className={`mt-1 text-[10px] font-bold ${data.isRoot ? "text-red-100" : "text-[var(--danger)]"}`}>
           <span>{data.childCreateError}</span>
           <button type="button" onClick={() => data.onAddChild?.(id)} className="ml-1 underline">다시 시도</button>
+        </div>
+      ) : null}
+      {data.mutationError ? (
+        <div role="alert" className={`nodrag mt-1 text-[10px] font-bold ${data.isRoot ? "text-red-100" : "text-[var(--danger)]"}`}>
+          <span>{data.mutationError.message}</span>
+          <div className="mt-1 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => data.onRetryMutation?.(id)}
+              className="underline"
+            >
+              다시 시도
+            </button>
+            <button
+              type="button"
+              onClick={() => data.onRevertMutation?.(id)}
+              className="underline"
+            >
+              서버 상태로 되돌리기
+            </button>
+          </div>
         </div>
       ) : null}
       <Handle type="source" position={Position.Right} className="!size-2 !border-0 !bg-violet-400 !opacity-0" />

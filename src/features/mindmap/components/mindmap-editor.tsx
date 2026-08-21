@@ -8,6 +8,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   type EdgeTypes,
+  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
 import Link from "next/link";
@@ -18,7 +19,12 @@ import { ApiClientError } from "@/features/mindmap/api/client";
 import { MindmapEdge } from "@/features/mindmap/components/mindmap-edge";
 import { MindmapNode } from "@/features/mindmap/components/mindmap-node";
 import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
-import { useCreateNode, useUpdateNodeTitle } from "@/features/mindmap/hooks/use-node-mutations";
+import {
+  useCreateNode,
+  useUpdateNodeCollapse,
+  useUpdateNodePosition,
+  useUpdateNodeTitle,
+} from "@/features/mindmap/hooks/use-node-mutations";
 import { mindmapDetailQueryKey, useMindmapDetail } from "@/features/mindmap/hooks/use-mindmap-detail";
 import {
   toMindmapFlow,
@@ -26,6 +32,15 @@ import {
   type MindmapFlowNode,
 } from "@/features/mindmap/model/flow-adapter";
 import { calculateChildPosition } from "@/features/mindmap/model/node-position";
+import {
+  applyNodeViewOverrides,
+  getDescendantIds,
+  nodesWithChildren,
+  selectVisibleNodes,
+  type CollapseOverrides,
+  type NodePosition,
+  type PositionOverrides,
+} from "@/features/mindmap/model/visible-tree";
 
 const nodeTypes: NodeTypes = { mindmap: MindmapNode };
 const edgeTypes: EdgeTypes = { mindmap: MindmapEdge };
@@ -50,6 +65,8 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const queryClient = useQueryClient();
   const createNodeMutation = useCreateNode();
   const updateTitleMutation = useUpdateNodeTitle();
+  const updatePositionMutation = useUpdateNodePosition();
+  const updateCollapseMutation = useUpdateNodeCollapse();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
   );
@@ -68,12 +85,74 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     parentNodeId: string;
     message: string;
   } | null>(null);
+  const [positionOverrides, setPositionOverrides] = useState<PositionOverrides>({});
+  const [collapseOverrides, setCollapseOverrides] = useState<CollapseOverrides>({});
+  const [pendingNodeIds, setPendingNodeIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [mutationErrors, setMutationErrors] = useState<Readonly<Record<
+    string,
+    { kind: "position" | "collapse"; message: string }
+  >>>({});
   const createLocks = useRef(new Set<string>());
   const updateLocks = useRef(new Set<string>());
   const updateSequences = useRef(new Map<string, number>());
+  const nodeMutationLocks = useRef(new Set<string>());
+  const nodeMutationSequences = useRef(new Map<string, number>());
+
+  const effectiveNodes = useMemo(
+    () => applyNodeViewOverrides(
+      detail.data?.nodes ?? [],
+      positionOverrides,
+      collapseOverrides,
+    ),
+    [collapseOverrides, detail.data?.nodes, positionOverrides],
+  );
+  const visibleNodes = useMemo(
+    () => detail.data
+      ? selectVisibleNodes(effectiveNodes, detail.data.rootNodeId)
+      : [],
+    [detail.data, effectiveNodes],
+  );
+  const parentNodeIds = useMemo(
+    () => nodesWithChildren(detail.data?.nodes ?? []),
+    [detail.data?.nodes],
+  );
+
+  const setNodePending = useCallback((nodeId: string, pending: boolean) => {
+    setPendingNodeIds((current) => {
+      const next = new Set(current);
+      if (pending) next.add(nodeId);
+      else next.delete(nodeId);
+      return next;
+    });
+  }, []);
+
+  const replaceCachedNode = useCallback((node: MindmapDetailResponse["nodes"][number]) => {
+    queryClient.setQueryData<MindmapDetailResponse>(
+      mindmapDetailQueryKey(mindmapId),
+      (current) => current
+        ? {
+            ...current,
+            nodes: current.nodes.map((candidate) =>
+              candidate.id === node.id ? node : candidate,
+            ),
+          }
+        : current,
+    );
+  }, [mindmapId, queryClient]);
+
+  const clearMutationError = useCallback((nodeId: string) => {
+    setMutationErrors((current) => {
+      if (!current[nodeId]) return current;
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+  }, []);
 
   const startEdit = useCallback((nodeId: string) => {
-    if (savingNodeId || creatingParentId) return;
+    if (savingNodeId || creatingParentId || nodeMutationLocks.current.has(nodeId)) return;
     const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
     if (!node) return;
     setSelectedNodeId(nodeId);
@@ -90,7 +169,11 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   }, [editingNodeId, savingNodeId]);
 
   const commitEdit = useCallback(async () => {
-    if (!editingNodeId || updateLocks.current.has(editingNodeId)) return;
+    if (
+      !editingNodeId ||
+      updateLocks.current.has(editingNodeId) ||
+      nodeMutationLocks.current.has(editingNodeId)
+    ) return;
     const node = detail.data?.nodes.find((candidate) => candidate.id === editingNodeId);
     if (!node) return;
     const title = editDraft.trim();
@@ -146,15 +229,20 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   }, [detail, editDraft, editingNodeId, mindmapId, queryClient, updateTitleMutation]);
 
   const addChild = useCallback(async (parentNodeId: string) => {
-    if (savingNodeId || creatingParentId || createLocks.current.has(parentNodeId)) return;
+    if (
+      savingNodeId ||
+      creatingParentId ||
+      createLocks.current.has(parentNodeId) ||
+      nodeMutationLocks.current.has(parentNodeId)
+    ) return;
     const current = detail.data;
-    const parent = current?.nodes.find((node) => node.id === parentNodeId);
-    if (!current || !parent) return;
+    const parent = effectiveNodes.find((node) => node.id === parentNodeId);
+    if (!current || !parent || parent.isCollapsed) return;
 
     createLocks.current.add(parentNodeId);
     setCreatingParentId(parentNodeId);
     setChildCreateError(null);
-    const position = calculateChildPosition(parent, current.nodes);
+    const position = calculateChildPosition(parent, effectiveNodes);
 
     try {
       const response = await createNodeMutation.mutateAsync({
@@ -190,7 +278,173 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         currentParentId === parentNodeId ? null : currentParentId,
       );
     }
-  }, [createNodeMutation, creatingParentId, detail.data, mindmapId, queryClient, savingNodeId]);
+  }, [createNodeMutation, creatingParentId, detail.data, effectiveNodes, mindmapId, queryClient, savingNodeId]);
+
+  const persistPosition = useCallback(async (nodeId: string, position: NodePosition) => {
+    if (nodeMutationLocks.current.has(nodeId)) return;
+    const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+
+    nodeMutationLocks.current.add(nodeId);
+    const sequence = (nodeMutationSequences.current.get(nodeId) ?? 0) + 1;
+    nodeMutationSequences.current.set(nodeId, sequence);
+    setNodePending(nodeId, true);
+    clearMutationError(nodeId);
+
+    try {
+      const response = await updatePositionMutation.mutateAsync({
+        nodeId,
+        input: { ...position, revision: node.revision },
+      });
+      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
+      replaceCachedNode(response.node);
+      setPositionOverrides((current) => {
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+    } catch (error) {
+      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
+      if (error instanceof ApiClientError && error.status === 409) {
+        await detail.refetch();
+        setMutationErrors((current) => ({
+          ...current,
+          [nodeId]: {
+            kind: "position",
+            message: "다른 변경사항을 반영했습니다. 위치 저장을 다시 시도해 주세요.",
+          },
+        }));
+      } else {
+        setMutationErrors((current) => ({
+          ...current,
+          [nodeId]: {
+            kind: "position",
+            message: error instanceof Error ? error.message : "위치를 저장하지 못했습니다.",
+          },
+        }));
+      }
+    } finally {
+      nodeMutationLocks.current.delete(nodeId);
+      if (nodeMutationSequences.current.get(nodeId) === sequence) {
+        setNodePending(nodeId, false);
+      }
+    }
+  }, [clearMutationError, detail, replaceCachedNode, setNodePending, updatePositionMutation]);
+
+  const persistCollapse = useCallback(async (nodeId: string, isCollapsed: boolean) => {
+    if (nodeMutationLocks.current.has(nodeId)) return;
+    const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+
+    nodeMutationLocks.current.add(nodeId);
+    const sequence = (nodeMutationSequences.current.get(nodeId) ?? 0) + 1;
+    nodeMutationSequences.current.set(nodeId, sequence);
+    setNodePending(nodeId, true);
+    clearMutationError(nodeId);
+
+    try {
+      const response = await updateCollapseMutation.mutateAsync({
+        nodeId,
+        input: { isCollapsed, revision: node.revision },
+      });
+      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
+      replaceCachedNode(response.node);
+      setCollapseOverrides((current) => {
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+    } catch (error) {
+      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
+      if (error instanceof ApiClientError && error.status === 409) {
+        await detail.refetch();
+        setMutationErrors((current) => ({
+          ...current,
+          [nodeId]: {
+            kind: "collapse",
+            message: "다른 변경사항을 반영했습니다. 접기 상태 저장을 다시 시도해 주세요.",
+          },
+        }));
+      } else {
+        setMutationErrors((current) => ({
+          ...current,
+          [nodeId]: {
+            kind: "collapse",
+            message: error instanceof Error ? error.message : "접기 상태를 저장하지 못했습니다.",
+          },
+        }));
+      }
+    } finally {
+      nodeMutationLocks.current.delete(nodeId);
+      if (nodeMutationSequences.current.get(nodeId) === sequence) {
+        setNodePending(nodeId, false);
+      }
+    }
+  }, [clearMutationError, detail, replaceCachedNode, setNodePending, updateCollapseMutation]);
+
+  const changeNodePositions = useCallback((changes: NodeChange<MindmapFlowNode>[]) => {
+    if (!changes.some((change) => change.type === "position" && change.position)) return;
+    setPositionOverrides((current) => {
+      const next = { ...current };
+      for (const change of changes) {
+        if (change.type === "position" && change.position) {
+          next[change.id] = change.position;
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleCollapse = useCallback((nodeId: string) => {
+    if (nodeMutationLocks.current.has(nodeId) || !parentNodeIds.has(nodeId)) return;
+    const node = effectiveNodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+    const nextCollapsed = !node.isCollapsed;
+    setCollapseOverrides((current) => ({ ...current, [nodeId]: nextCollapsed }));
+    clearMutationError(nodeId);
+
+    if (nextCollapsed && detail.data) {
+      const descendants = getDescendantIds(detail.data.nodes, nodeId);
+      if (selectedNodeId && descendants.has(selectedNodeId)) setSelectedNodeId(nodeId);
+      if (editingNodeId && descendants.has(editingNodeId)) {
+        setEditingNodeId(null);
+        setEditDraft("");
+        setEditError(null);
+      }
+    }
+    void persistCollapse(nodeId, nextCollapsed);
+  }, [clearMutationError, detail.data, editingNodeId, effectiveNodes, parentNodeIds, persistCollapse, selectedNodeId]);
+
+  const retryNodeMutation = useCallback((nodeId: string) => {
+    const error = mutationErrors[nodeId];
+    if (!error) return;
+    if (error.kind === "position") {
+      const position = positionOverrides[nodeId];
+      if (position) void persistPosition(nodeId, position);
+      return;
+    }
+    const isCollapsed = collapseOverrides[nodeId];
+    if (isCollapsed !== undefined) void persistCollapse(nodeId, isCollapsed);
+  }, [collapseOverrides, mutationErrors, persistCollapse, persistPosition, positionOverrides]);
+
+  const revertNodeMutation = useCallback((nodeId: string) => {
+    const error = mutationErrors[nodeId];
+    if (!error) return;
+    if (error.kind === "position") {
+      setPositionOverrides((current) => {
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+    } else {
+      setCollapseOverrides((current) => {
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+    }
+    clearMutationError(nodeId);
+  }, [clearMutationError, mutationErrors]);
 
   if (detail.isPending && !detail.data) return <EditorLoadingState />;
   if (!detail.data) {
@@ -201,7 +455,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     <main className="flex h-screen min-h-[32rem] flex-col overflow-hidden bg-[var(--background)]">
       <EditorHeader title={detail.data.mindmap.title} refreshFailed={detail.isError} onRetry={() => void detail.refetch()} />
       <MindmapCanvas
-        detail={detail.data}
+        detail={{ ...detail.data, nodes: visibleNodes }}
         selectedNodeId={selectedNodeId}
         onSelectNode={setSelectedNodeId}
         editingNodeId={editingNodeId}
@@ -210,6 +464,9 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         savingNodeId={savingNodeId}
         creatingParentId={creatingParentId}
         childCreateError={childCreateError}
+        pendingNodeIds={pendingNodeIds}
+        parentNodeIds={parentNodeIds}
+        mutationErrors={mutationErrors}
         onAddChild={(nodeId) => void addChild(nodeId)}
         onCancelEdit={cancelEdit}
         onChangeDraft={(value) => {
@@ -218,6 +475,11 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         }}
         onCommitEdit={() => void commitEdit()}
         onStartEdit={startEdit}
+        onToggleCollapse={toggleCollapse}
+        onRetryMutation={retryNodeMutation}
+        onRevertMutation={revertNodeMutation}
+        onNodesChange={changeNodePositions}
+        onNodeDragStop={(nodeId, position) => void persistPosition(nodeId, position)}
       />
     </main>
   );
@@ -249,11 +511,19 @@ function MindmapCanvas({
   savingNodeId,
   creatingParentId,
   childCreateError,
+  pendingNodeIds,
+  parentNodeIds,
+  mutationErrors,
   onAddChild,
   onCancelEdit,
   onChangeDraft,
   onCommitEdit,
   onStartEdit,
+  onToggleCollapse,
+  onRetryMutation,
+  onRevertMutation,
+  onNodesChange,
+  onNodeDragStop,
 }: {
   detail: MindmapDetailResponse;
   selectedNodeId: string | null;
@@ -264,11 +534,19 @@ function MindmapCanvas({
   savingNodeId: string | null;
   creatingParentId: string | null;
   childCreateError: { parentNodeId: string; message: string } | null;
+  pendingNodeIds: ReadonlySet<string>;
+  parentNodeIds: ReadonlySet<string>;
+  mutationErrors: Readonly<Record<string, { kind: "position" | "collapse"; message: string }>>;
   onAddChild: (nodeId: string) => void;
   onCancelEdit: () => void;
   onChangeDraft: (value: string) => void;
   onCommitEdit: () => void;
   onStartEdit: (nodeId: string) => void;
+  onToggleCollapse: (nodeId: string) => void;
+  onRetryMutation: (nodeId: string) => void;
+  onRevertMutation: (nodeId: string) => void;
+  onNodesChange: (changes: NodeChange<MindmapFlowNode>[]) => void;
+  onNodeDragStop: (nodeId: string, position: NodePosition) => void;
 }) {
   const flow = useMemo(
     () => toMindmapFlow(detail, selectedNodeId, {
@@ -278,14 +556,26 @@ function MindmapCanvas({
       savingNodeId,
       creatingParentId,
       childCreateError,
+      pendingNodeIds,
+      nodesWithChildren: parentNodeIds,
+      mutationErrors,
       onAddChild,
       onCancelEdit,
       onChangeDraft,
       onCommitEdit,
       onStartEdit,
+      onToggleCollapse,
+      onRetryMutation,
+      onRevertMutation,
     }),
     [
       childCreateError,
+      mutationErrors,
+      onRetryMutation,
+      onRevertMutation,
+      onToggleCollapse,
+      parentNodeIds,
+      pendingNodeIds,
       creatingParentId,
       detail,
       editDraft,
@@ -306,7 +596,7 @@ function MindmapCanvas({
   return (
     <section
       aria-label="마인드맵 캔버스"
-      data-nodes-draggable="false"
+      data-nodes-draggable="true"
       data-nodes-connectable="false"
       data-delete-enabled="false"
       className="relative min-h-0 flex-1"
@@ -317,12 +607,14 @@ function MindmapCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={selectNode}
+        onNodesChange={onNodesChange}
+        onNodeDragStop={(_event, node) => onNodeDragStop(node.id, node.position)}
         onPaneClick={clearSelection}
         fitView
         fitViewOptions={fitViewOptions}
         minZoom={0.2}
         maxZoom={2}
-        nodesDraggable={false}
+        nodesDraggable
         nodesConnectable={false}
         elementsSelectable
         edgesFocusable={false}

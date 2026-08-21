@@ -49,7 +49,7 @@ describe("MindmapEditor", () => {
     expect(screen.getByRole("button", { name: "축소" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "화면 맞춤" })).toBeInTheDocument();
     const canvas = screen.getByRole("region", { name: "마인드맵 캔버스" });
-    expect(canvas).toHaveAttribute("data-nodes-draggable", "false");
+    expect(canvas).toHaveAttribute("data-nodes-draggable", "true");
     expect(canvas).toHaveAttribute("data-nodes-connectable", "false");
     expect(canvas).toHaveAttribute("data-delete-enabled", "false");
 
@@ -138,6 +138,50 @@ describe("MindmapEditor", () => {
     expect(await screen.findByText("노드 생성 실패")).toBeInTheDocument();
     expect(screen.getByText("다시 시도")).toBeInTheDocument();
     expect(screen.queryByLabelText("노드 제목")).not.toBeInTheDocument();
+  });
+
+  it("collapses and expands descendants immediately while preserving the tree", async () => {
+    const root = detail.nodes[0];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        node: { ...root, isCollapsed: true, revision: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        node: { ...root, isCollapsed: false, revision: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(detail);
+
+    expect(screen.queryByLabelText("자식 하위 트리 접기")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("자식"));
+    fireEvent.click(screen.getByLabelText("시작 하위 트리 접기"));
+
+    expect(screen.queryByText("자식")).not.toBeInTheDocument();
+    expect(screen.getByTestId("root-node")).toHaveClass("ring-4");
+    const addButton = screen.getByLabelText("시작에 자식 노드 추가");
+    expect(addButton).toBeDisabled();
+    expect(document.querySelectorAll(".react-flow__edge")).toHaveLength(0);
+
+    const expandButton = await screen.findByLabelText("시작 하위 트리 펼치기");
+    fireEvent.click(expandButton);
+    await waitFor(() => expect(screen.getByText("자식")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a failed collapse locally and can restore the server state", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "접기 저장 실패" } }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    )));
+    renderEditor(detail);
+
+    fireEvent.click(screen.getByLabelText("시작 하위 트리 접기"));
+
+    expect(screen.queryByText("자식")).not.toBeInTheDocument();
+    expect(await screen.findByText("접기 저장 실패")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("서버 상태로 되돌리기"));
+    expect(screen.getByText("자식")).toBeInTheDocument();
+    expect(screen.queryByText("접기 저장 실패")).not.toBeInTheDocument();
   });
 
   it("edits with Enter, cancels with Escape, and protects IME composition", async () => {
