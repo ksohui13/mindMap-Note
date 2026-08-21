@@ -353,7 +353,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 06. Node 생성과 제목 편집 규칙 — ⬜ TODO
+## 06. Node 생성과 제목 편집 규칙 — ✅ DONE
 
 ### Goal
 
@@ -393,6 +393,25 @@ DEFERRED TO 12 / NOT VERIFIED
 - Playwright: 생성 직후 root 즉시 입력→다단계 child 생성→이름 변경→reload 복원
 - lint, typecheck, test, build 및 실제 키보드/한글 입력 확인
 
+### Execution Record (2026-08-21)
+
+- Backend: 소유 Mindmap의 child 생성과 `revision` 조건부 title update service를 transaction으로 구현하고, parent의 동일 Mindmap 소속·제목·유한 좌표·소유권을 검증했다. 생성/수정 시 Mindmap `updatedAt`도 함께 갱신한다.
+- API: `POST /api/mindmaps/:mindmapId/nodes`와 `PATCH /api/nodes/:nodeId`를 추가했다. 둘 다 DB session, same-origin, UUID/Zod 입력 검증을 적용하며 비소유/미존재 리소스는 404, revision 충돌은 409로 반환한다.
+- Frontend: root 초기 auto focus/전체 선택, 모든 node의 `[+]`, `새 노드` 생성 직후 Edit Mode, controlled inline input, Enter/Esc/double click, IME Enter 보호, 빈 제목 복원, 실패 draft·재시도를 구현했다.
+- 위치 규칙: parent 오른쪽 240px에서 `0, +96, -96, +192, -192...` 순서로 기존 형제가 차지하지 않은 첫 slot을 선택해 자동 layout 없이 결정적 배치를 제공한다.
+- 순서 보호: server revision 조건 갱신과 client sequence/synchronous in-flight lock을 함께 적용하고, mutation 중 충돌 가능한 다른 node 편집·생성을 잠가 늦은 응답이 새 편집 상태를 덮지 않게 했다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(17 files/62 tests), `npm run build`, `npx playwright test --list`(4 files/5 tests).
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 child 생성·다른 map parent·타 사용자·revision conflict integration test 실행
+- 실제 브라우저에서 root 한글 즉시 입력→다단계 child 생성→제목 변경→reload 복원 Playwright 실행
+- 실제 키보드/IME, focus/caret, 시각 배치와 browser console 확인
+- 사유: Docker engine이 실행 중이지 않아 DB 기반 integration/E2E 환경을 기동할 수 없음
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 06을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성됐으며 실행 책임은 Infrastructure Validation Backlog에 유지한다.
+
 ### Definition of Done
 
 - 핵심 root/child 생성·제목 편집 흐름이 마우스와 키보드로 동작한다.
@@ -401,7 +420,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 07. Node 자유 이동·위치 저장·하위 트리 접기/펼치기 — ⬜ TODO
+## 07. Node 자유 이동·위치 저장·하위 트리 접기/펼치기 — ✅ DONE
 
 ### Goal
 
@@ -439,6 +458,25 @@ DEFERRED TO 12 / NOT VERIFIED
 - component test: drag 중 API 미호출, drag end 1회 호출, 접힘 시 descendant 제거
 - Playwright: drag→reload 좌표 복원, collapse→reload 상태 복원, 부모 관계 불변 확인
 - lint, typecheck, test, build 및 실제 캔버스 조작 확인
+
+### Execution Record (2026-08-21)
+
+- Backend: title 저장과 같은 소유권·`revision` 조건부 공통 update helper를 position/collapse에도 적용했다. 성공 시 node revision 증가와 Mindmap `updatedAt` 갱신이 하나의 transaction에서 수행된다.
+- API: `PATCH /api/nodes/:nodeId/position`과 `PATCH /api/nodes/:nodeId/collapse`를 추가했다. same-origin, DB session, UUID, 유한 좌표, boolean, 음이 아닌 정수 revision을 검증하며 비소유/미존재는 404, revision 충돌은 409로 반환한다.
+- Drag: React Flow의 position change는 node별 local override에만 반영하고 Drag End에서만 한 번 저장한다. 실패한 위치는 유지되며 `다시 시도` 또는 `서버 위치로 되돌리기`를 선택할 수 있다.
+- Collapse: 전체 tree 관계와 좌표는 유지한 채 O(n) selector가 effective collapse 상태를 기준으로 descendant node와 관련 edge를 렌더 대상에서 제외한다. root 접기, 기존 좌표 복원, 숨겨지는 선택 node의 parent 이동을 포함한다.
+- UI/동시성: 자식이 있는 node에만 접근 가능한 `▾/▸` 버튼을 표시하고 접힌 node의 `[+]`를 비활성화했다. node별 synchronous lock과 sequence로 동일 node 중복 mutation 및 늦은 응답을 차단했다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(20 files/73 tests), `npm run build`, `npx playwright test --list`(4 files/5 tests), `git diff --check`.
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 position/collapse 저장·revision conflict·타 사용자 차단·reload 복원 integration test 실행
+- 실제 브라우저에서 drag→reload, collapse→reload, root collapse, 부모 관계 불변 Playwright 실행
+- 실제 포인터 조작, visible-node Fit View, 시각 배치와 browser console 확인
+- 사유: Docker engine이 실행 중이지 않아 DB 기반 integration/E2E 환경을 기동할 수 없음
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 07을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성됐으며 실행 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -703,6 +741,8 @@ DEFERRED TO 12 / NOT VERIFIED
 | 03 | NOT VERIFIED | 실제 DB auth integration, cookie/session E2E, 가입→Dashboard→logout Playwright, 브라우저 시각 확인 |
 | 04 | NOT VERIFIED | 실제 DB Dashboard integration, 가입→목록·연속 생성·최소 Editor·이름 변경 Playwright, reload 영속성·브라우저 시각/console 확인 |
 | 05 | NOT VERIFIED | 실제 DB Editor detail/integrity integration, node·edge 선택·Pan·Zoom·Fit View Playwright, 좌표·관계 reload 및 브라우저 시각/console 확인 |
+| 06 | NOT VERIFIED | 실제 DB child/title/revision integration, root 한글 즉시 편집→다단계 child→reload Playwright, focus·IME·기본 배치·브라우저 시각/console 확인 |
+| 07 | NOT VERIFIED | 실제 DB position/collapse/revision/소유권 integration, drag·collapse·root collapse→reload 및 부모 관계 불변 Playwright, Fit View·브라우저 시각/console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -717,8 +757,8 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 03. 인증 및 접근 제어 | ✅ DONE | 가입·로그인·로그아웃·session·접근 제어와 S01 UI 구현 |
 | 04. Dashboard와 Mindmap 기본 수명주기 | ✅ DONE | 목록·자동 생성·열기·이름 변경과 최소 Editor 진입 구현 |
 | 05. Editor 캔버스 기반 | ✅ DONE | 소유권 기반 Node/Edge 조회와 선택·Pan·Zoom·Fit View 구현 |
-| 06. Node 생성·제목 편집 | ⬜ TODO | root 즉시 편집과 child 생성·수정 |
-| 07. 이동·접기/펼치기 | ⬜ TODO | 자유 배치와 렌더 범위 제어·복원 |
+| 06. Node 생성·제목 편집 | ✅ DONE | root 즉시 편집과 child 생성·revision 기반 제목 수정 구현 |
+| 07. 이동·접기/펼치기 | ✅ DONE | Drag End 위치 저장과 하위 tree 접기·펼치기·실패 복구 구현 |
 | 08. Markdown 상세 UI | ⬜ TODO | 패널·미리보기·전체화면 집중 편집 |
 | 09. 자동저장·오류 복구 | ⬜ TODO | 2초 debounce, 저장 상태, retry, draft 보호 |
 | 10. 안전한 삭제 | ⬜ TODO | Mindmap 및 일반 node subtree 확인 삭제 |
@@ -726,10 +766,10 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 5
+- 완료: 7
 - 진행 중: 0
 - 차단: 0
-- 남음: 7
+- 남음: 5
 
 ## Decision Log
 
@@ -761,6 +801,12 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-19 | 05 | tree 무결성을 렌더 전 O(n) 검증 | 자기 참조 FK만으로는 parent가 같은 Mindmap에 속함을 보장하지 못하므로 잘못된 edge와 순환 구조를 client에 전달하지 않기 위함 |
 | 2026-08-19 | 05 | node drag/connect/delete를 명시적으로 비활성화 | 06·07 API가 없는 상태에서 저장되지 않는 편집처럼 보이는 사용자 조작을 허용하지 않기 위함 |
 | 2026-08-19 | 05 | React Flow 상태는 adapter 결과와 selected node local state만 제어 | 현재 단계의 읽기·탐색 요구를 충족하면서 미래 편집 기능을 위한 전역 store를 선제 도입하지 않기 위함 |
+| 2026-08-21 | 06 | child 기본 위치를 오른쪽 240px·세로 96px 대칭 slot으로 결정 | 자유 배치 정책을 유지하면서 신규 형제의 초기 겹침을 결정적으로 줄이고 기존 node를 재배치하지 않기 위함 |
+| 2026-08-21 | 06 | title mutation은 server revision과 client sequence·즉시 lock을 함께 사용 | 오래된 요청을 DB에서 거부하고 동일 render frame의 중복 제출과 늦은 client 응답의 상태 덮어쓰기를 동시에 막기 위함 |
+| 2026-08-21 | 06 | node 제목 blur는 저장이 아닌 취소로 처리 | 확정 문서의 Enter 저장·Esc 취소 규칙을 단일 저장 경계로 유지하고 의도하지 않은 focus 이동 저장을 피하기 위함 |
+| 2026-08-21 | 07 | 서버 좌표·접힘 상태와 local override를 분리 | 실패 시 사용자의 방금 조작을 유지하면서 명시적 재시도와 서버 상태 복원을 모두 제공하기 위함 |
+| 2026-08-21 | 07 | 전체 tree는 유지하고 O(n) visible selector로 렌더 범위만 계산 | parent 관계와 저장 좌표를 바꾸지 않으면서 중첩·root collapse를 일관되게 처리하기 위함 |
+| 2026-08-21 | 07 | 자식 node에만 인라인 chevron을 표시하고 접힌 node의 추가를 잠금 | 조작 가능성을 명확히 드러내고 보이지 않는 subtree에 의도치 않게 child가 생성되는 것을 방지하기 위함 |
 
 ## Surprises & Discoveries
 
@@ -769,6 +815,7 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 - 이미지의 `공유` 버튼과 로그인 화면의 `공유와 협업` 문구는 개인 데이터 우선·협업 제외 정책과 충돌한다. MVP UI에서는 공유 기능을 노출하지 않는다.
 - 이미지의 child placeholder와 좌우 대칭 tree 배치는 자동 레이아웃처럼 보이지만 확정 정책은 자유 배치다. 신규 node는 부모 주변 기본 좌표만 계산하고 이후 사용자가 이동한다.
 - 문서에는 1,000 node의 부분 로딩/viewport 렌더링이 선택지로 제시됐지만 정확한 초기 로딩 범위 API는 확정되지 않았다. 먼저 단순 조회를 계측하고 목표 미달일 때만 12단계에서 복잡성을 추가한다.
+- JSDOM에서는 React Flow의 d3 drag가 browser document 좌표를 요구해 실제 pointer drag를 안정적으로 재현할 수 없었다. component test는 React Flow callback 경계에서 drag/change를 검증하고 실제 pointer 조작은 작성된 Playwright 시나리오를 12단계에서 실행한다.
 - 브라우저/tab 강제 종료 순간의 네트워크 저장은 플랫폼 특성상 성공을 보장할 수 없다. 09단계는 서버 저장을 거짓 성공 처리하지 않고 local draft journal로 데이터 손실 위험을 낮춘다.
 - Markdown 본문 크기 상한, session 만료 기간 같은 운영 수치는 제품 정책으로 명시되지 않았다. 구현 시 보안·운영을 위한 합리적 기술 기본값을 선택해 Decision Log에 수치와 이유를 남긴다.
 - 저장소 root와 `docs/`에 서로 다른 `MASTER_PLAN.md`가 중복 존재한다. 사용자 지정에 따라 `docs/MASTER_PLAN.md`만 상태 원본으로 갱신했고 root 문서는 수정하지 않았다.

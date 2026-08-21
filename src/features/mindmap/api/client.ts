@@ -1,9 +1,15 @@
 import type {
+  CreateNodeInput,
+  CreateNodeResponse,
   CreateMindmapResponse,
   MindmapDetailResponse,
   MindmapListResponse,
   UpdateMindmapInput,
   UpdateMindmapResponse,
+  UpdateNodeResponse,
+  UpdateNodeCollapseInput,
+  UpdateNodePositionInput,
+  UpdateNodeTitleInput,
 } from "./contracts";
 
 export class ApiClientError extends Error {
@@ -59,5 +65,57 @@ export async function fetchMindmapDetail(
 ): Promise<MindmapDetailResponse> {
   return parseResponse(
     await fetch(`/api/mindmaps/${mindmapId}`, { cache: "no-store" }),
+  );
+}
+
+export async function createNode(
+  mindmapId: string,
+  input: CreateNodeInput,
+): Promise<CreateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/mindmaps/${mindmapId}/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateNodeTitle(
+  nodeId: string,
+  input: UpdateNodeTitleInput,
+): Promise<UpdateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateNodePosition(
+  nodeId: string,
+  input: UpdateNodePositionInput,
+): Promise<UpdateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/position`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateNodeCollapse(
+  nodeId: string,
+  input: UpdateNodeCollapseInput,
+): Promise<UpdateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/collapse`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   );
 }

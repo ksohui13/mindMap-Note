@@ -15,7 +15,7 @@ test.describe("dashboard lifecycle", () => {
     await expect(page.getByText("첫 마인드맵을 만들어 보세요")).toBeVisible();
     await page.getByRole("button", { name: "+ 새 마인드맵" }).click();
     await expect(page).toHaveURL(/\/mindmaps\/[0-9a-f-]+\?rootNodeId=[0-9a-f-]+&initialEdit=1/);
-    await expect(page.getByText("시작", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("노드 제목")).toHaveValue("시작");
     await page.getByRole("link", { name: "← Dashboard" }).click();
 
     await page.getByRole("button", { name: "+ 새 마인드맵" }).click();

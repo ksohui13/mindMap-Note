@@ -4,8 +4,12 @@ import { createMindmapWithRoot } from "@/server/domain/mindmap.service";
 import { countDescendants } from "@/server/domain/node.repository";
 import {
   createChildNode,
+  createChildNodeForUser,
   deleteNodeSubtree,
   updateNode,
+  updateNodeCollapseForUser,
+  updateNodePositionForUser,
+  updateNodeTitleForUser,
 } from "@/server/domain/node.service";
 import { createSession } from "@/server/domain/session.repository";
 import { createUser } from "@/server/domain/user.repository";
@@ -19,6 +23,123 @@ async function createTreeOwner(email: string) {
 }
 
 describe("node domain services", () => {
+  it("creates an owned child and rejects foreign ownership or a cross-map parent", async () => {
+    const owner = await createTreeOwner("owned-child@example.test");
+    const otherMap = await createMindmapWithRoot(owner.user.id, integrationClient);
+    const stranger = await createTreeOwner("foreign-child@example.test");
+
+    await expect(createChildNodeForUser({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: " 새 노드 ",
+      x: 240,
+      y: 0,
+    }, owner.user.id, integrationClient)).resolves.toMatchObject({
+      node: { title: "새 노드", parentNodeId: owner.rootNode.id },
+    });
+
+    await expect(createChildNodeForUser({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: otherMap.rootNode.id,
+      title: "잘못된 부모",
+      x: 0,
+      y: 0,
+    }, owner.user.id, integrationClient)).rejects.toMatchObject({ code: "DATA_INTEGRITY" });
+
+    await expect(createChildNodeForUser({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "비소유",
+      x: 0,
+      y: 0,
+    }, stranger.user.id, integrationClient)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("updates a title only for its owner and matching revision", async () => {
+    const owner = await createTreeOwner("revision-owner@example.test");
+    const stranger = await createTreeOwner("revision-stranger@example.test");
+
+    const updated = await updateNodeTitleForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      "새 루트",
+      0,
+      integrationClient,
+    );
+    expect(updated).toMatchObject({ title: "새 루트", revision: 1 });
+
+    await expect(updateNodeTitleForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      "오래된 수정",
+      0,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(updateNodeTitleForUser(
+      owner.rootNode.id,
+      stranger.user.id,
+      "비소유 수정",
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("persists owned position and collapse changes without changing the parent", async () => {
+    const owner = await createTreeOwner("node-state-owner@example.test");
+    const stranger = await createTreeOwner("node-state-stranger@example.test");
+    const child = await createChildNode({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "Movable",
+      x: 1,
+      y: 2,
+    }, integrationClient);
+
+    const moved = await updateNodePositionForUser(
+      child.id,
+      owner.user.id,
+      450,
+      -120,
+      0,
+      integrationClient,
+    );
+    expect(moved).toMatchObject({
+      parentNodeId: owner.rootNode.id,
+      x: 450,
+      y: -120,
+      revision: 1,
+    });
+
+    const collapsed = await updateNodeCollapseForUser(
+      child.id,
+      owner.user.id,
+      true,
+      1,
+      integrationClient,
+    );
+    expect(collapsed).toMatchObject({
+      parentNodeId: owner.rootNode.id,
+      isCollapsed: true,
+      revision: 2,
+    });
+
+    await expect(updateNodePositionForUser(
+      child.id,
+      owner.user.id,
+      0,
+      0,
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(updateNodeCollapseForUser(
+      child.id,
+      stranger.user.id,
+      false,
+      2,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("rejects a parent from another mindmap", async () => {
     const owner = await createTreeOwner("parent@example.test");
     const other = await createMindmapWithRoot(owner.user.id, integrationClient);
