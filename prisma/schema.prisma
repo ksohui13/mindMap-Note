@@ -1,0 +1,64 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique @db.VarChar(320)
+  passwordHash String    @db.VarChar(255)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
+  sessions     Session[]
+  mindmaps     Mindmap[]
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique @db.Char(64)
+  userId    String   @db.Uuid
+  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Mindmap {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  title      String   @db.VarChar(200)
+  sequenceNo Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodes      Node[]
+
+  @@unique([userId, sequenceNo])
+  @@index([userId, updatedAt])
+}
+
+model Node {
+  id           String   @id @default(uuid()) @db.Uuid
+  mindmapId    String   @db.Uuid
+  parentNodeId String?  @db.Uuid
+  title        String   @db.VarChar(200)
+  contentMd    String   @default("") @db.Text
+  x            Float    @default(0) @db.DoublePrecision
+  y            Float    @default(0) @db.DoublePrecision
+  isCollapsed  Boolean  @default(false)
+  revision     Int      @default(0)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  mindmap      Mindmap  @relation(fields: [mindmapId], references: [id], onDelete: Cascade)
+  parent       Node?    @relation("NodeChildren", fields: [parentNodeId], references: [id], onDelete: Cascade)
+  children     Node[]   @relation("NodeChildren")
+
+  @@index([mindmapId])
+  @@index([parentNodeId])
+}
