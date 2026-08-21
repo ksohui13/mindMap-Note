@@ -82,10 +82,60 @@ test.describe("mindmap editor canvas", () => {
     await grandchildInput.fill("손자 노드");
     await grandchildInput.press("Enter");
 
+    const mindmapId = page.url().match(/\/mindmaps\/([0-9a-f-]+)/)?.[1] ?? "";
+    expect(mindmapId).toBeTruthy();
+    const childNode = page.locator('.react-flow__node').filter({ hasText: "첫 번째 자식" });
+    const childBox = await childNode.boundingBox();
+    if (!childBox) throw new Error("Child node was not measurable.");
+    const positionSaved = page.waitForResponse((response) =>
+      response.url().includes("/position") && response.request().method() === "PATCH",
+    );
+    await page.mouse.move(childBox.x + childBox.width / 2, childBox.y + childBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      childBox.x + childBox.width / 2 + 120,
+      childBox.y + childBox.height / 2 + 80,
+    );
+    await page.mouse.up();
+    const positionResponse = await positionSaved;
+    expect(positionResponse.ok()).toBe(true);
+
     await page.reload();
     await expect(page.getByText("루트 개념", { exact: true })).toBeVisible();
     await expect(page.getByText("첫 번째 자식", { exact: true })).toBeVisible();
     await expect(page.getByText("손자 노드", { exact: true })).toBeVisible();
     await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+
+    const collapseSaved = page.waitForResponse((response) =>
+      response.url().includes("/collapse") && response.request().method() === "PATCH",
+    );
+    await page.getByLabel("루트 개념 하위 트리 접기").click();
+    await collapseSaved;
+    await expect(page.getByText("첫 번째 자식", { exact: true })).not.toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("루트 개념 하위 트리 펼치기")).toBeVisible();
+    await expect(page.getByText("첫 번째 자식", { exact: true })).not.toBeVisible();
+
+    const expandSaved = page.waitForResponse((response) =>
+      response.url().includes("/collapse") && response.request().method() === "PATCH",
+    );
+    await page.getByLabel("루트 개념 하위 트리 펼치기").click();
+    await expandSaved;
+    await expect(page.getByText("첫 번째 자식", { exact: true })).toBeVisible();
+
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) throw new Error("DATABASE_URL is required for editor E2E.");
+    const { createPrismaClient } = await import("../../src/server/db/client");
+    const client = createPrismaClient(databaseUrl);
+    try {
+      const [root, child] = await Promise.all([
+        client.node.findFirstOrThrow({ where: { mindmapId, parentNodeId: null } }),
+        client.node.findFirstOrThrow({ where: { mindmapId, title: "첫 번째 자식" } }),
+      ]);
+      expect(child.parentNodeId).toBe(root.id);
+      expect({ x: child.x, y: child.y }).not.toEqual({ x: 240, y: 0 });
+    } finally {
+      await client.$disconnect();
+    }
   });
 });

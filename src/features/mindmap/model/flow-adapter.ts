@@ -13,12 +13,18 @@ export type MindmapNodeData = {
   isSaving?: boolean;
   isCreatingChild?: boolean;
   isInteractionDisabled?: boolean;
+  isMutationPending?: boolean;
+  hasChildren?: boolean;
+  mutationError?: { kind: "position" | "collapse"; message: string } | null;
   childCreateError?: string | null;
   onAddChild?: (nodeId: string) => void;
   onCancelEdit?: () => void;
   onChangeDraft?: (value: string) => void;
   onCommitEdit?: () => void;
   onStartEdit?: (nodeId: string) => void;
+  onToggleCollapse?: (nodeId: string) => void;
+  onRetryMutation?: (nodeId: string) => void;
+  onRevertMutation?: (nodeId: string) => void;
 };
 
 export type MindmapFlowNode = Node<MindmapNodeData, "mindmap">;
@@ -34,11 +40,17 @@ export function toMindmapFlow(
     savingNodeId: string | null;
     creatingParentId: string | null;
     childCreateError: { parentNodeId: string; message: string } | null;
+    pendingNodeIds: ReadonlySet<string>;
+    nodesWithChildren: ReadonlySet<string>;
+    mutationErrors: Readonly<Record<string, { kind: "position" | "collapse"; message: string }>>;
     onAddChild: (nodeId: string) => void;
     onCancelEdit: () => void;
     onChangeDraft: (value: string) => void;
     onCommitEdit: () => void;
     onStartEdit: (nodeId: string) => void;
+    onToggleCollapse: (nodeId: string) => void;
+    onRetryMutation: (nodeId: string) => void;
+    onRevertMutation: (nodeId: string) => void;
   }>,
 ): { nodes: MindmapFlowNode[]; edges: MindmapFlowEdge[] } {
   return {
@@ -47,7 +59,13 @@ export function toMindmapFlow(
       type: "mindmap",
       position: { x: node.x, y: node.y },
       selected: node.id === selectedNodeId,
-      draggable: false,
+      draggable: Boolean(
+        interaction &&
+          interaction.editingNodeId !== node.id &&
+          interaction.savingNodeId !== node.id &&
+          interaction.creatingParentId === null &&
+          !interaction.pendingNodeIds.has(node.id),
+      ),
       connectable: false,
       deletable: false,
       ariaLabel: `${node.id === detail.rootNodeId ? "루트 노드" : "노드"}: ${node.title}`,
@@ -61,9 +79,16 @@ export function toMindmapFlow(
         editError: interaction?.editingNodeId === node.id ? interaction.editError : null,
         isSaving: interaction?.savingNodeId === node.id,
         isCreatingChild: interaction?.creatingParentId === node.id,
+        isMutationPending: interaction?.pendingNodeIds.has(node.id),
+        hasChildren: interaction?.nodesWithChildren.has(node.id),
+        mutationError: interaction?.mutationErrors[node.id] ?? null,
         isInteractionDisabled: Boolean(
           interaction &&
-            (interaction.savingNodeId !== null || interaction.creatingParentId !== null),
+            (
+              interaction.savingNodeId !== null ||
+              interaction.creatingParentId !== null ||
+              interaction.pendingNodeIds.has(node.id)
+            ),
         ),
         childCreateError:
           interaction?.childCreateError?.parentNodeId === node.id
@@ -74,6 +99,9 @@ export function toMindmapFlow(
         onChangeDraft: interaction?.onChangeDraft,
         onCommitEdit: interaction?.onCommitEdit,
         onStartEdit: interaction?.onStartEdit,
+        onToggleCollapse: interaction?.onToggleCollapse,
+        onRetryMutation: interaction?.onRetryMutation,
+        onRevertMutation: interaction?.onRevertMutation,
       },
     })),
     edges: detail.nodes.flatMap((node) =>

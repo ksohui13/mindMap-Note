@@ -73,6 +73,19 @@ export const updateNodeTitleInputSchema = z.object({
   revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
 });
 
+export const updateNodePositionInputSchema = z.object({
+  x: z.number().finite("노드의 x 좌표가 올바르지 않습니다."),
+  y: z.number().finite("노드의 y 좌표가 올바르지 않습니다."),
+  revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
+});
+
+export const updateNodeCollapseInputSchema = z.object({
+  isCollapsed: z.boolean("접기 상태가 올바르지 않습니다."),
+  revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
+});
+
 export type UpdateMindmapInput = z.infer<typeof updateMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
 export type UpdateNodeTitleInput = z.infer<typeof updateNodeTitleInputSchema>;
+export type UpdateNodePositionInput = z.infer<typeof updateNodePositionInputSchema>;
+export type UpdateNodeCollapseInput = z.infer<typeof updateNodeCollapseInputSchema>;

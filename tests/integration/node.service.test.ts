@@ -7,6 +7,8 @@ import {
   createChildNodeForUser,
   deleteNodeSubtree,
   updateNode,
+  updateNodeCollapseForUser,
+  updateNodePositionForUser,
   updateNodeTitleForUser,
 } from "@/server/domain/node.service";
 import { createSession } from "@/server/domain/session.repository";
@@ -78,6 +80,62 @@ describe("node domain services", () => {
       stranger.user.id,
       "비소유 수정",
       1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("persists owned position and collapse changes without changing the parent", async () => {
+    const owner = await createTreeOwner("node-state-owner@example.test");
+    const stranger = await createTreeOwner("node-state-stranger@example.test");
+    const child = await createChildNode({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "Movable",
+      x: 1,
+      y: 2,
+    }, integrationClient);
+
+    const moved = await updateNodePositionForUser(
+      child.id,
+      owner.user.id,
+      450,
+      -120,
+      0,
+      integrationClient,
+    );
+    expect(moved).toMatchObject({
+      parentNodeId: owner.rootNode.id,
+      x: 450,
+      y: -120,
+      revision: 1,
+    });
+
+    const collapsed = await updateNodeCollapseForUser(
+      child.id,
+      owner.user.id,
+      true,
+      1,
+      integrationClient,
+    );
+    expect(collapsed).toMatchObject({
+      parentNodeId: owner.rootNode.id,
+      isCollapsed: true,
+      revision: 2,
+    });
+
+    await expect(updateNodePositionForUser(
+      child.id,
+      owner.user.id,
+      0,
+      0,
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(updateNodeCollapseForUser(
+      child.id,
+      stranger.user.id,
+      false,
+      2,
       integrationClient,
     )).rejects.toMatchObject({ code: "NOT_FOUND" });
   });

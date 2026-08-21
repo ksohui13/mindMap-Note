@@ -181,14 +181,20 @@ export function updateNodeTitle(
   return updateNode(nodeId, { title }, client);
 }
 
-export async function updateNodeTitleForUser(
+type OwnedNodeMutation = {
+  title?: string;
+  x?: number;
+  y?: number;
+  isCollapsed?: boolean;
+};
+
+async function updateOwnedNodeWithRevision(
   nodeId: string,
   userId: string,
-  title: string,
   revision: number,
-  client: PrismaClient = prisma,
+  data: OwnedNodeMutation,
+  client: PrismaClient,
 ): Promise<Node> {
-  const normalizedTitle = normalizeTitle(title);
   if (!Number.isInteger(revision) || revision < 0) {
     throw new DomainError("INVALID_INPUT", "Node revision must be a non-negative integer.");
   }
@@ -205,7 +211,7 @@ export async function updateNodeTitleForUser(
 
       const result = await transaction.node.updateMany({
         where: { id: nodeId, revision },
-        data: { title: normalizedTitle, revision: { increment: 1 } },
+        data: { ...data, revision: { increment: 1 } },
       });
       if (result.count === 0) {
         throw new DomainError("CONFLICT", "Node was changed by another request.");
@@ -219,6 +225,54 @@ export async function updateNodeTitleForUser(
     if (error instanceof DomainError) throw error;
     return mapPrismaError(error);
   }
+}
+
+export async function updateNodeTitleForUser(
+  nodeId: string,
+  userId: string,
+  title: string,
+  revision: number,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  const normalizedTitle = normalizeTitle(title);
+  return updateOwnedNodeWithRevision(
+    nodeId,
+    userId,
+    revision,
+    { title: normalizedTitle },
+    client,
+  );
+}
+
+export function updateNodePositionForUser(
+  nodeId: string,
+  userId: string,
+  x: number,
+  y: number,
+  revision: number,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  assertFinitePosition(x, y);
+  return updateOwnedNodeWithRevision(nodeId, userId, revision, { x, y }, client);
+}
+
+export function updateNodeCollapseForUser(
+  nodeId: string,
+  userId: string,
+  isCollapsed: boolean,
+  revision: number,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  if (typeof isCollapsed !== "boolean") {
+    throw new DomainError("INVALID_INPUT", "Node collapse state must be a boolean.");
+  }
+  return updateOwnedNodeWithRevision(
+    nodeId,
+    userId,
+    revision,
+    { isCollapsed },
+    client,
+  );
 }
 
 export async function deleteNodeSubtree(

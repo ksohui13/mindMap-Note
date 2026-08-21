@@ -7,6 +7,8 @@ import type {
   UpdateMindmapInput,
   UpdateMindmapResponse,
   UpdateNodeResponse,
+  UpdateNodeCollapseInput,
+  UpdateNodePositionInput,
   UpdateNodeTitleInput,
 } from "./contracts";
 
@@ -85,6 +87,32 @@ export async function updateNodeTitle(
 ): Promise<UpdateNodeResponse> {
   return parseResponse(
     await fetch(`/api/nodes/${nodeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateNodePosition(
+  nodeId: string,
+  input: UpdateNodePositionInput,
+): Promise<UpdateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/position`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateNodeCollapse(
+  nodeId: string,
+  input: UpdateNodeCollapseInput,
+): Promise<UpdateNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/collapse`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
