@@ -550,7 +550,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 09. 통합 자동저장·저장 상태·실패 복구 — ⬜ TODO
+## 09. 통합 자동저장·저장 상태·실패 복구 — ✅ DONE
 
 ### Goal
 
@@ -589,6 +589,25 @@ DEFERRED TO 12 / NOT VERIFIED
 - component test: idle/dirty/saving/saved/failed 표시, 실패 후 draft 유지, 수동 retry
 - Playwright network interception: 저장 실패→계속 작성→복구→reload, 빠른 A/B node 전환, pagehide 후 draft 복구
 - lint, typecheck, test, build 및 브라우저 Network 탭에서 호출 횟수 확인
+
+### Execution Record (2026-08-24)
+
+- title·position·collapse·content가 공유하는 node별 mutation coordinator를 구현했다. 같은 node 요청은 revision 순서대로 직렬화하고 서로 다른 node는 병렬 처리하며, client sequence가 오래된 응답의 최신 dirty/save 상태 덮어쓰기를 막는다.
+- 모든 node mutation의 409 응답에 검증된 `details.currentRevision`을 포함하고, 비소유 node는 계속 404로 숨긴다. client는 안전한 정수 revision만 받아 coordinator의 다음 명시적 재시도에 사용한다.
+- Markdown 입력은 node별 2초 debounce로 자동저장한다. 저장 중 새 입력은 최신 draft 하나로 합치고, node 전환·panel 닫기·Dashboard 이동은 dirty draft를 즉시 flush한다.
+- `idle | dirty | saving | saved | failed` 상태와 `failed > saving > dirty > saved > idle` 집계 우선순위를 Header/Detail footer에 연결했다. 일시 오류와 409만 수동 재시도를 제공하고 validation/not-found/auth 오류는 원인만 표시한다.
+- `mindmap:draft:v1:{mindmapId}:{nodeId}` localStorage journal을 동기 기록한다. 서버 저장 확인 전에는 삭제하지 않으며, 서버본과 다르면 편집을 멈춘 복구 안내에서 초안 적용/서버본 사용을 선택한다. 손상 record와 storage/quota 오류가 네트워크 저장을 막지 않게 했다.
+- `visibilitychange`와 `pagehide`에서는 `keepalive` 저장을 최선 시도하되 journal을 남긴다. 브라우저가 전송 성공을 보장하지 않는 경계를 local draft 복구로 보완한다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(27 files/97 tests), `npm run build`, `npx playwright test --list`(4 files/6 tests), `git diff --check`.
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 title/position/collapse/content 공유 revision, 409 currentRevision, 소유권 404, Mindmap updatedAt integration test 실행
+- 실제 Chromium에서 2초 autosave, 빠른 A/B 전환, panel 닫기·Dashboard 이동 flush, 실패·재시도, pagehide journal 복구, reload 영속성 Playwright 실행
+- 사유: PostgreSQL localhost:5432 연결 거부로 DB integration 및 DB 기반 Playwright를 실행할 수 없음
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 09를 `✅ DONE`으로 변경했다. DB/E2E test code는 갱신했으며 실제 실행 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -762,6 +781,7 @@ DEFERRED TO 12 / NOT VERIFIED
 | 06 | NOT VERIFIED | 실제 DB child/title/revision integration, root 한글 즉시 편집→다단계 child→reload Playwright, focus·IME·기본 배치·브라우저 시각/console 확인 |
 | 07 | NOT VERIFIED | 실제 DB position/collapse/revision/소유권 integration, drag·collapse·root collapse→reload 및 부모 관계 불변 Playwright, Fit View·브라우저 시각/console 확인 |
 | 08 | NOT VERIFIED | 실제 DB content/revision/소유권/256KiB integration, Markdown 작성·GFM preview·fullscreen 왕복 Playwright, viewport·focus·반응형·브라우저 시각/console 확인 |
+| 09 | NOT VERIFIED | 실제 DB 공유 node revision/409 currentRevision/updatedAt integration, 2초 autosave·A/B 전환·flush·실패 재시도·pagehide journal 복구·reload 영속성 Playwright, 브라우저 Network/console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -779,16 +799,16 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 06. Node 생성·제목 편집 | ✅ DONE | root 즉시 편집과 child 생성·revision 기반 제목 수정 구현 |
 | 07. 이동·접기/펼치기 | ✅ DONE | Drag End 위치 저장과 하위 tree 접기·펼치기·실패 복구 구현 |
 | 08. Markdown 상세 UI | ✅ DONE | 노드별 상세 조회·격리 draft·GFM 미리보기·전체화면 집중 편집 구현 |
-| 09. 자동저장·오류 복구 | ⬜ TODO | 2초 debounce, 저장 상태, retry, draft 보호 |
+| 09. 자동저장·오류 복구 | ✅ DONE | node별 직렬 저장·2초 debounce·실제 저장 상태·local draft 복구 구현 |
 | 10. 안전한 삭제 | ⬜ TODO | Mindmap 및 일반 node subtree 확인 삭제 |
 | 11. Markdown 내보내기 | ⬜ TODO | ALL/NODE/SUBTREE UTF-8 파일 다운로드 |
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 8
+- 완료: 9
 - 진행 중: 0
 - 차단: 0
-- 남음: 4
+- 남음: 3
 
 ## Decision Log
 
@@ -829,6 +849,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-24 | 08 | Node Markdown을 전체 tree와 분리된 선택 조회 API로 제공 | 긴 본문이 최대 1,000 node 초기 캔버스 응답과 렌더 성능을 악화시키지 않게 하기 위함 |
 | 2026-08-24 | 08 | Markdown 본문 상한을 UTF-8 256KiB로 결정 | 긴 PoC 문서를 허용하면서 요청 메모리와 저장 크기에 명시적인 경계를 두기 위함 |
 | 2026-08-24 | 08 | 상세 draft는 node별 in-memory 상태로 격리하고 저장 호출은 09로 이관 | node 전환 중 초안 혼합을 막되 debounce·재시도·재접속 보호 정책을 09에서 하나의 저장 상태기로 완성하기 위함 |
+| 2026-08-24 | 09 | 같은 node의 모든 mutation을 하나의 coordinator에서 직렬화 | title·position·collapse·content가 revision 하나를 공유하므로 필드별 독립 mutation이 서로 충돌하거나 오래된 응답으로 상태를 되돌리는 것을 막기 위함 |
+| 2026-08-24 | 09 | Markdown journal은 서버 저장 확인·동일 내용 확인·사용자 폐기 때만 삭제 | tab 종료와 keepalive 실패 여부를 신뢰할 수 없는 상황에서도 미저장 사용자 입력을 임의로 잃지 않기 위함 |
+| 2026-08-24 | 09 | 409는 자동 덮어쓰기하지 않고 최신 revision 조회 후 명시적 재시도 | 서버의 최신 변경을 무단으로 덮지 않으면서 로컬 draft를 보존하고 사용자가 저장 재개 시점을 통제하게 하기 위함 |
 
 ## Surprises & Discoveries
 

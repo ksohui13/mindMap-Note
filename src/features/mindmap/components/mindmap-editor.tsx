@@ -29,7 +29,10 @@ import {
   useUpdateNodePosition,
   useUpdateNodeTitle,
 } from "@/features/mindmap/hooks/use-node-mutations";
+import { useMarkdownAutosave } from "@/features/mindmap/hooks/use-markdown-autosave";
 import { mindmapDetailQueryKey, useMindmapDetail } from "@/features/mindmap/hooks/use-mindmap-detail";
+import { useNodeContent } from "@/features/mindmap/hooks/use-node-content";
+import { useNodeMutationCoordinator } from "@/features/mindmap/hooks/use-node-mutation-coordinator";
 import {
   toMindmapFlow,
   type MindmapFlowEdge,
@@ -45,6 +48,7 @@ import {
   type NodePosition,
   type PositionOverrides,
 } from "@/features/mindmap/model/visible-tree";
+import { SaveStatus } from "@/shared/ui/save-status";
 
 const nodeTypes: NodeTypes = { mindmap: MindmapNode };
 const edgeTypes: EdgeTypes = { mindmap: MindmapEdge };
@@ -76,7 +80,6 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   );
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailFullscreenOpen, setDetailFullscreenOpen] = useState(false);
-  const [contentDrafts, setContentDrafts] = useState<Readonly<Record<string, string>>>({});
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
@@ -103,10 +106,18 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     { kind: "position" | "collapse"; message: string }
   >>>({});
   const createLocks = useRef(new Set<string>());
-  const updateLocks = useRef(new Set<string>());
-  const updateSequences = useRef(new Map<string, number>());
   const nodeMutationLocks = useRef(new Set<string>());
-  const nodeMutationSequences = useRef(new Map<string, number>());
+
+  const saveCoordinator = useNodeMutationCoordinator(detail.data?.nodes ?? []);
+  const selectedContent = useNodeContent(
+    detailPanelOpen && selectedNodeId ? selectedNodeId : null,
+  );
+  const markdownAutosave = useMarkdownAutosave({
+    mindmapId,
+    selectedNodeId: detailPanelOpen ? selectedNodeId : null,
+    selectedContent: selectedContent.data,
+    coordinator: saveCoordinator,
+  });
 
   const effectiveNodes = useMemo(
     () => applyNodeViewOverrides(
@@ -179,7 +190,6 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const commitEdit = useCallback(async () => {
     if (
       !editingNodeId ||
-      updateLocks.current.has(editingNodeId) ||
       nodeMutationLocks.current.has(editingNodeId)
     ) return;
     const node = detail.data?.nodes.find((candidate) => candidate.id === editingNodeId);
@@ -197,44 +207,51 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       return;
     }
 
-    updateLocks.current.add(node.id);
-    const sequence = (updateSequences.current.get(node.id) ?? 0) + 1;
-    updateSequences.current.set(node.id, sequence);
+    nodeMutationLocks.current.add(node.id);
     setSavingNodeId(node.id);
     setEditError(null);
 
     try {
-      const response = await updateTitleMutation.mutateAsync({
-        nodeId: node.id,
-        input: { title, revision: node.revision },
-      });
-      if (updateSequences.current.get(node.id) !== sequence) return;
-      queryClient.setQueryData<MindmapDetailResponse>(
-        mindmapDetailQueryKey(mindmapId),
-        (current) => current
-          ? {
-              ...current,
-              nodes: current.nodes.map((candidate) =>
-                candidate.id === response.node.id ? response.node : candidate,
-              ),
+      await saveCoordinator.run(
+        node.id,
+        "title",
+        (revision) => updateTitleMutation.mutateAsync({
+          nodeId: node.id,
+          input: { title, revision },
+        }),
+        {
+          onSuccess: (response) => {
+            queryClient.setQueryData<MindmapDetailResponse>(
+              mindmapDetailQueryKey(mindmapId),
+              (current) => current
+                ? {
+                    ...current,
+                    nodes: current.nodes.map((candidate) =>
+                      candidate.id === response.node.id ? response.node : candidate,
+                    ),
+                  }
+                : current,
+            );
+            setEditingNodeId(null);
+            setEditDraft("");
+          },
+          onError: async (error) => {
+            if (error instanceof ApiClientError && error.status === 409) {
+              await detail.refetch();
+              setEditError("다른 변경사항을 반영했습니다. 다시 시도해 주세요.");
+              return;
             }
-          : current,
+            setEditError(error instanceof Error ? error.message : "제목을 저장하지 못했습니다.");
+          },
+        },
       );
-      setEditingNodeId(null);
-      setEditDraft("");
-    } catch (error) {
-      if (updateSequences.current.get(node.id) !== sequence) return;
-      if (error instanceof ApiClientError && error.status === 409) {
-        await detail.refetch();
-        setEditError("다른 변경사항을 반영했습니다. 다시 시도해 주세요.");
-      } else {
-        setEditError(error instanceof Error ? error.message : "제목을 저장하지 못했습니다.");
-      }
+    } catch {
+      // The coordinator records the failed operation and exposes the retry action.
     } finally {
-      updateLocks.current.delete(node.id);
-      if (updateSequences.current.get(node.id) === sequence) setSavingNodeId(null);
+      nodeMutationLocks.current.delete(node.id);
+      setSavingNodeId(null);
     }
-  }, [detail, editDraft, editingNodeId, mindmapId, queryClient, updateTitleMutation]);
+  }, [detail, editDraft, editingNodeId, mindmapId, queryClient, saveCoordinator, updateTitleMutation]);
 
   const addChild = useCallback(async (parentNodeId: string) => {
     if (
@@ -290,105 +307,99 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
 
   const persistPosition = useCallback(async (nodeId: string, position: NodePosition) => {
     if (nodeMutationLocks.current.has(nodeId)) return;
-    const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) return;
+    if (!detail.data?.nodes.some((candidate) => candidate.id === nodeId)) return;
 
     nodeMutationLocks.current.add(nodeId);
-    const sequence = (nodeMutationSequences.current.get(nodeId) ?? 0) + 1;
-    nodeMutationSequences.current.set(nodeId, sequence);
     setNodePending(nodeId, true);
     clearMutationError(nodeId);
 
     try {
-      const response = await updatePositionMutation.mutateAsync({
+      await saveCoordinator.run(
         nodeId,
-        input: { ...position, revision: node.revision },
-      });
-      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
-      replaceCachedNode(response.node);
-      setPositionOverrides((current) => {
-        const next = { ...current };
-        delete next[nodeId];
-        return next;
-      });
-    } catch (error) {
-      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
-      if (error instanceof ApiClientError && error.status === 409) {
-        await detail.refetch();
-        setMutationErrors((current) => ({
-          ...current,
-          [nodeId]: {
-            kind: "position",
-            message: "다른 변경사항을 반영했습니다. 위치 저장을 다시 시도해 주세요.",
+        "position",
+        (revision) => updatePositionMutation.mutateAsync({
+          nodeId,
+          input: { ...position, revision },
+        }),
+        {
+          onSuccess: (response) => {
+            replaceCachedNode(response.node);
+            setPositionOverrides((current) => {
+              const next = { ...current };
+              delete next[nodeId];
+              return next;
+            });
           },
-        }));
-      } else {
-        setMutationErrors((current) => ({
-          ...current,
-          [nodeId]: {
-            kind: "position",
-            message: error instanceof Error ? error.message : "위치를 저장하지 못했습니다.",
+          onError: async (error) => {
+            const isConflict = error instanceof ApiClientError && error.status === 409;
+            if (isConflict) await detail.refetch();
+            setMutationErrors((current) => ({
+              ...current,
+              [nodeId]: {
+                kind: "position",
+                message: isConflict
+                  ? "다른 변경사항을 반영했습니다. 위치 저장을 다시 시도해 주세요."
+                  : error instanceof Error ? error.message : "위치를 저장하지 못했습니다.",
+              },
+            }));
           },
-        }));
-      }
+        },
+      );
+    } catch {
+      // The local override remains available for retry or restore.
     } finally {
       nodeMutationLocks.current.delete(nodeId);
-      if (nodeMutationSequences.current.get(nodeId) === sequence) {
-        setNodePending(nodeId, false);
-      }
+      setNodePending(nodeId, false);
     }
-  }, [clearMutationError, detail, replaceCachedNode, setNodePending, updatePositionMutation]);
+  }, [clearMutationError, detail, replaceCachedNode, saveCoordinator, setNodePending, updatePositionMutation]);
 
   const persistCollapse = useCallback(async (nodeId: string, isCollapsed: boolean) => {
     if (nodeMutationLocks.current.has(nodeId)) return;
-    const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) return;
+    if (!detail.data?.nodes.some((candidate) => candidate.id === nodeId)) return;
 
     nodeMutationLocks.current.add(nodeId);
-    const sequence = (nodeMutationSequences.current.get(nodeId) ?? 0) + 1;
-    nodeMutationSequences.current.set(nodeId, sequence);
     setNodePending(nodeId, true);
     clearMutationError(nodeId);
 
     try {
-      const response = await updateCollapseMutation.mutateAsync({
+      await saveCoordinator.run(
         nodeId,
-        input: { isCollapsed, revision: node.revision },
-      });
-      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
-      replaceCachedNode(response.node);
-      setCollapseOverrides((current) => {
-        const next = { ...current };
-        delete next[nodeId];
-        return next;
-      });
-    } catch (error) {
-      if (nodeMutationSequences.current.get(nodeId) !== sequence) return;
-      if (error instanceof ApiClientError && error.status === 409) {
-        await detail.refetch();
-        setMutationErrors((current) => ({
-          ...current,
-          [nodeId]: {
-            kind: "collapse",
-            message: "다른 변경사항을 반영했습니다. 접기 상태 저장을 다시 시도해 주세요.",
+        "collapse",
+        (revision) => updateCollapseMutation.mutateAsync({
+          nodeId,
+          input: { isCollapsed, revision },
+        }),
+        {
+          onSuccess: (response) => {
+            replaceCachedNode(response.node);
+            setCollapseOverrides((current) => {
+              const next = { ...current };
+              delete next[nodeId];
+              return next;
+            });
           },
-        }));
-      } else {
-        setMutationErrors((current) => ({
-          ...current,
-          [nodeId]: {
-            kind: "collapse",
-            message: error instanceof Error ? error.message : "접기 상태를 저장하지 못했습니다.",
+          onError: async (error) => {
+            const isConflict = error instanceof ApiClientError && error.status === 409;
+            if (isConflict) await detail.refetch();
+            setMutationErrors((current) => ({
+              ...current,
+              [nodeId]: {
+                kind: "collapse",
+                message: isConflict
+                  ? "다른 변경사항을 반영했습니다. 접기 상태 저장을 다시 시도해 주세요."
+                  : error instanceof Error ? error.message : "접기 상태를 저장하지 못했습니다.",
+              },
+            }));
           },
-        }));
-      }
+        },
+      );
+    } catch {
+      // The local override remains available for retry or restore.
     } finally {
       nodeMutationLocks.current.delete(nodeId);
-      if (nodeMutationSequences.current.get(nodeId) === sequence) {
-        setNodePending(nodeId, false);
-      }
+      setNodePending(nodeId, false);
     }
-  }, [clearMutationError, detail, replaceCachedNode, setNodePending, updateCollapseMutation]);
+  }, [clearMutationError, detail, replaceCachedNode, saveCoordinator, setNodePending, updateCollapseMutation]);
 
   const changeNodePositions = useCallback((changes: NodeChange<MindmapFlowNode>[]) => {
     if (!changes.some((change) => change.type === "position" && change.position)) return;
@@ -413,7 +424,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
 
     if (nextCollapsed && detail.data) {
       const descendants = getDescendantIds(detail.data.nodes, nodeId);
-      if (selectedNodeId && descendants.has(selectedNodeId)) setSelectedNodeId(nodeId);
+      if (selectedNodeId && descendants.has(selectedNodeId)) {
+        if (detailPanelOpen) void markdownAutosave.flush(selectedNodeId);
+        setSelectedNodeId(nodeId);
+      }
       if (editingNodeId && descendants.has(editingNodeId)) {
         setEditingNodeId(null);
         setEditDraft("");
@@ -421,7 +435,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       }
     }
     void persistCollapse(nodeId, nextCollapsed);
-  }, [clearMutationError, detail.data, editingNodeId, effectiveNodes, parentNodeIds, persistCollapse, selectedNodeId]);
+  }, [clearMutationError, detail.data, detailPanelOpen, editingNodeId, effectiveNodes, markdownAutosave, parentNodeIds, persistCollapse, selectedNodeId]);
 
   const retryNodeMutation = useCallback((nodeId: string) => {
     const error = mutationErrors[nodeId];
@@ -452,23 +466,22 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       });
     }
     clearMutationError(nodeId);
-  }, [clearMutationError, mutationErrors]);
+    saveCoordinator.markIdle(nodeId, error.kind);
+  }, [clearMutationError, mutationErrors, saveCoordinator]);
 
   const openNodeDetail = useCallback((nodeId: string) => {
+    if (selectedNodeId && selectedNodeId !== nodeId) {
+      void markdownAutosave.flush(selectedNodeId);
+    }
     setSelectedNodeId(nodeId);
     setDetailPanelOpen(true);
-  }, []);
+  }, [markdownAutosave, selectedNodeId]);
 
   const closeNodeDetail = useCallback(() => {
+    if (selectedNodeId) void markdownAutosave.flush(selectedNodeId);
     setDetailFullscreenOpen(false);
     setDetailPanelOpen(false);
-  }, []);
-
-  const changeContentDraft = useCallback((nodeId: string, value: string) => {
-    setContentDrafts((current) => current[nodeId] === value
-      ? current
-      : { ...current, [nodeId]: value });
-  }, []);
+  }, [markdownAutosave, selectedNodeId]);
 
   const closeFullscreen = useCallback(() => {
     setDetailFullscreenOpen(false);
@@ -482,7 +495,14 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
 
   return (
     <main className="flex h-screen min-h-[32rem] flex-col overflow-hidden bg-[var(--background)]">
-      <EditorHeader title={detail.data.mindmap.title} refreshFailed={detail.isError} onRetry={() => void detail.refetch()} />
+      <EditorHeader
+        title={detail.data.mindmap.title}
+        refreshFailed={detail.isError}
+        onRetry={() => void detail.refetch()}
+        saveRecord={saveCoordinator.overall}
+        onRetrySave={saveCoordinator.retryAll}
+        onBeforeNavigate={() => markdownAutosave.flushAll()}
+      />
       <MindmapCanvas
         detail={{ ...detail.data, nodes: visibleNodes }}
         selectedNodeId={selectedNodeId}
@@ -521,37 +541,64 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         <NodeDetailPanel
           nodeId={selectedNodeId}
           title={detail.data.nodes.find((node) => node.id === selectedNodeId)?.title ?? "노드 상세"}
-          draft={contentDrafts[selectedNodeId]}
-          onChangeDraft={changeContentDraft}
+          content={selectedContent}
+          draft={markdownAutosave.drafts[selectedNodeId]}
+          onChangeDraft={markdownAutosave.changeDraft}
           onClose={closeNodeDetail}
           onOpenFullscreen={() => setDetailFullscreenOpen(true)}
           fullscreenButtonRef={fullscreenButtonRef}
+          saveRecord={saveCoordinator.getRecord(selectedNodeId, "content")}
+          onRetrySave={() => saveCoordinator.retry(selectedNodeId, "content")}
+          recovery={markdownAutosave.recovery}
+          onApplyRecovery={() => markdownAutosave.applyRecovery(selectedNodeId)}
+          onDiscardRecovery={() => markdownAutosave.discardRecovery(selectedNodeId)}
+          storageWarning={markdownAutosave.storageWarning}
         />
       ) : null}
       {detailFullscreenOpen && selectedNodeId ? (
         <NodeDetailFullscreen
           nodeId={selectedNodeId}
           title={detail.data.nodes.find((node) => node.id === selectedNodeId)?.title ?? "노드 상세"}
-          draft={contentDrafts[selectedNodeId]}
-          onChangeDraft={changeContentDraft}
+          content={selectedContent}
+          draft={markdownAutosave.drafts[selectedNodeId]}
+          onChangeDraft={markdownAutosave.changeDraft}
           onClose={closeFullscreen}
+          saveRecord={saveCoordinator.getRecord(selectedNodeId, "content")}
+          onRetrySave={() => saveCoordinator.retry(selectedNodeId, "content")}
+          recovery={markdownAutosave.recovery}
+          onApplyRecovery={() => markdownAutosave.applyRecovery(selectedNodeId)}
+          onDiscardRecovery={() => markdownAutosave.discardRecovery(selectedNodeId)}
+          storageWarning={markdownAutosave.storageWarning}
         />
       ) : null}
     </main>
   );
 }
 
-function EditorHeader({ title, refreshFailed, onRetry }: { title: string; refreshFailed: boolean; onRetry: () => void }) {
+function EditorHeader({
+  title,
+  refreshFailed,
+  onRetry,
+  saveRecord,
+  onRetrySave,
+  onBeforeNavigate,
+}: {
+  title: string;
+  refreshFailed: boolean;
+  onRetry: () => void;
+  saveRecord: ReturnType<typeof useNodeMutationCoordinator>["overall"];
+  onRetrySave: () => void;
+  onBeforeNavigate: () => void;
+}) {
   return (
     <header className="z-10 border-b border-[var(--border)] bg-white">
       <div className="flex min-h-[4.5rem] items-center gap-4 px-4 sm:px-6">
-        <Link href="/" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:border-[var(--primary)] hover:text-[var(--primary)]">← Dashboard</Link>
+        <Link href="/" onClick={onBeforeNavigate} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:border-[var(--primary)] hover:text-[var(--primary)]">← Dashboard</Link>
         <h1 className="min-w-0 flex-1 truncate text-lg font-extrabold">{title}</h1>
+        <SaveStatus record={saveRecord} onRetry={onRetrySave} />
         {refreshFailed ? (
           <button type="button" onClick={onRetry} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-[var(--danger)]">새로고침 실패 · 다시 시도</button>
-        ) : (
-          <span role="status" className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-[var(--success)]">서버에서 불러옴</span>
-        )}
+        ) : null}
       </div>
     </header>
   );

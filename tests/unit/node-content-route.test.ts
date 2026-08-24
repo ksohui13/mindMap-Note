@@ -109,10 +109,15 @@ describe("node content route", () => {
 
   it("maps stale revisions to 409 and foreign nodes to 404", async () => {
     vi.mocked(updateNodeContentForUser).mockRejectedValueOnce(
-      new DomainError("CONFLICT", "Node was changed by another request."),
+      new DomainError("CONFLICT", "Node was changed by another request.", undefined, {
+        currentRevision: 9,
+      }),
     );
     const conflict = await PATCH(request("PATCH", { contentMd: "변경", revision: 1 }), context);
     expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      error: { code: "CONFLICT", details: { currentRevision: 9 } },
+    });
 
     vi.mocked(getNodeContentForUser).mockRejectedValueOnce(
       new DomainError("NOT_FOUND", "Node was not found."),

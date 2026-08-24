@@ -23,8 +23,15 @@ export function useNodeContent(nodeId: string | null) {
 export function useUpdateNodeContent(mindmapId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ nodeId, input }: { nodeId: string; input: UpdateNodeContentInput }) =>
-      updateNodeContent(nodeId, input),
+    mutationFn: ({
+      nodeId,
+      input,
+      keepalive,
+    }: {
+      nodeId: string;
+      input: UpdateNodeContentInput;
+      keepalive?: boolean;
+    }) => updateNodeContent(nodeId, input, { keepalive }),
     onSuccess: (response) => {
       queryClient.setQueryData(nodeContentQueryKey(response.node.id), response);
       queryClient.setQueryData<MindmapDetailResponse>(

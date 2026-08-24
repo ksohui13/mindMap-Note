@@ -9,22 +9,32 @@ import {
 
 import { MarkdownPreview } from "@/features/mindmap/components/markdown-preview";
 import { useNodeContent } from "@/features/mindmap/hooks/use-node-content";
+import type { DraftJournalEntry } from "@/features/mindmap/lib/draft-journal";
+import type { SaveRecord } from "@/features/mindmap/model/save-state";
+import { SaveStatus } from "@/shared/ui/save-status";
 
 type DetailTab = "edit" | "preview";
 
 type NodeDetailProps = {
   nodeId: string;
   title: string;
+  content: ReturnType<typeof useNodeContent>;
   draft: string | undefined;
   onChangeDraft: (nodeId: string, value: string) => void;
   onClose: () => void;
   onOpenFullscreen: () => void;
   fullscreenButtonRef: RefObject<HTMLButtonElement | null>;
+  saveRecord: SaveRecord;
+  onRetrySave: () => void;
+  recovery?: DraftJournalEntry;
+  onApplyRecovery: () => void;
+  onDiscardRecovery: () => void;
+  storageWarning: string | null;
 };
 
 export function NodeDetailPanel(props: NodeDetailProps) {
   const [tab, setTab] = useState<DetailTab>("edit");
-  const content = useNodeContent(props.nodeId);
+  const content = props.content;
   const effectiveDraft = props.draft ?? content.data?.node.contentMd;
 
   return (
@@ -40,15 +50,27 @@ export function NodeDetailPanel(props: NodeDetailProps) {
       />
       <DetailTabs active={tab} onChange={setTab} />
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        <DetailContent
-          content={content}
-          draft={effectiveDraft}
-          nodeId={props.nodeId}
-          mode={tab}
-          onChangeDraft={props.onChangeDraft}
-        />
+        {props.recovery ? (
+          <RecoveryPrompt
+            recovery={props.recovery}
+            onApply={props.onApplyRecovery}
+            onDiscard={props.onDiscardRecovery}
+          />
+        ) : (
+          <DetailContent
+            content={content}
+            draft={effectiveDraft}
+            nodeId={props.nodeId}
+            mode={tab}
+            onChangeDraft={props.onChangeDraft}
+          />
+        )}
       </div>
-      <DraftStatus draft={effectiveDraft} serverContent={content.data?.node.contentMd} />
+      <DraftStatus
+        record={props.saveRecord}
+        onRetry={props.onRetrySave}
+        storageWarning={props.storageWarning}
+      />
     </aside>
   );
 }
@@ -59,8 +81,14 @@ export function NodeDetailFullscreen({
   draft,
   onChangeDraft,
   onClose,
+  content,
+  saveRecord,
+  onRetrySave,
+  recovery,
+  onApplyRecovery,
+  onDiscardRecovery,
+  storageWarning,
 }: Omit<NodeDetailProps, "onOpenFullscreen" | "fullscreenButtonRef">) {
-  const content = useNodeContent(nodeId);
   const effectiveDraft = draft ?? content.data?.node.contentMd;
   const [mobileTab, setMobileTab] = useState<DetailTab>("edit");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -98,6 +126,16 @@ export function NodeDetailFullscreen({
         <DetailTabs active={mobileTab} onChange={setMobileTab} />
       </div>
       <div className="grid min-h-0 flex-1 md:grid-cols-2">
+        {recovery ? (
+          <div className="col-span-full grid place-items-center p-6">
+            <RecoveryPrompt
+              recovery={recovery}
+              onApply={onApplyRecovery}
+              onDiscard={onDiscardRecovery}
+            />
+          </div>
+        ) : (
+          <>
         <section
           aria-label="Markdown 편집기"
           className={`${mobileTab === "edit" ? "flex" : "hidden"} min-h-0 flex-col border-r border-[var(--border)] bg-white p-4 md:flex`}
@@ -123,8 +161,10 @@ export function NodeDetailFullscreen({
             onChangeDraft={onChangeDraft}
           />
         </section>
+          </>
+        )}
       </div>
-      <DraftStatus draft={effectiveDraft} serverContent={content.data?.node.contentMd} />
+      <DraftStatus record={saveRecord} onRetry={onRetrySave} storageWarning={storageWarning} />
     </div>
   );
 }
@@ -221,11 +261,40 @@ function DetailContent({
   );
 }
 
-function DraftStatus({ draft, serverContent }: { draft: string | undefined; serverContent: string | undefined }) {
-  const dirty = draft !== undefined && serverContent !== undefined && draft !== serverContent;
+function DraftStatus({
+  record,
+  onRetry,
+  storageWarning,
+}: {
+  record: SaveRecord;
+  onRetry: () => void;
+  storageWarning: string | null;
+}) {
   return (
-    <footer role="status" className="border-t border-[var(--border)] bg-white px-4 py-2 text-xs font-bold text-[var(--muted)]">
-      {dirty ? "임시 초안 · 자동저장은 09단계에서 연결됩니다." : "서버에서 불러온 내용"}
+    <footer className="border-t border-[var(--border)] bg-white px-4 py-2">
+      <SaveStatus record={record} onRetry={onRetry} compact />
+      {storageWarning ? <p role="alert" className="mt-1 text-xs font-bold text-[var(--danger)]">{storageWarning}</p> : null}
     </footer>
+  );
+}
+
+function RecoveryPrompt({
+  recovery,
+  onApply,
+  onDiscard,
+}: {
+  recovery: DraftJournalEntry;
+  onApply: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div role="alert" className="w-full max-w-lg rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-950">
+      <h3 className="font-extrabold">저장되지 않은 로컬 초안이 있습니다</h3>
+      <p className="mt-2 text-xs">{new Date(recovery.updatedAt).toLocaleString("ko-KR")}에 작성한 초안을 복구할지 선택해 주세요.</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" onClick={onApply} className="rounded-lg bg-amber-900 px-3 py-2 font-bold text-white">초안 적용</button>
+        <button type="button" onClick={onDiscard} className="rounded-lg border border-amber-400 bg-white px-3 py-2 font-bold">서버본 사용</button>
+      </div>
+    </div>
   );
 }

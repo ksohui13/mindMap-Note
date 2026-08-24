@@ -42,7 +42,7 @@ describe("MindmapEditor", () => {
     const { container } = renderEditor(detail, true);
 
     expect(screen.getByRole("heading", { name: "Editor 테스트" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("서버에서 불러옴");
+    expect(screen.getByText("서버와 동기화됨")).toBeInTheDocument();
     expect(screen.getByTestId("root-node")).toHaveClass("ring-4");
     expect(screen.getByText("자식")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "확대" })).toBeInTheDocument();
@@ -77,15 +77,18 @@ describe("MindmapEditor", () => {
   });
 
   it("isolates node drafts and preserves canvas state through fullscreen", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const isChild = url.includes("/nodes/child/content");
+      const submitted = init?.method === "PATCH"
+        ? (JSON.parse(String(init.body)) as { contentMd: string })
+        : null;
       return new Response(JSON.stringify({
         node: {
           id: isChild ? "child" : "root",
           title: isChild ? "자식" : "시작",
-          contentMd: isChild ? "# 자식 서버 내용" : "# 루트 서버 내용",
-          revision: 0,
+          contentMd: submitted?.contentMd ?? (isChild ? "# 자식 서버 내용" : "# 루트 서버 내용"),
+          revision: submitted ? 1 : 0,
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -95,7 +98,7 @@ describe("MindmapEditor", () => {
     fireEvent.click(screen.getByText("자식"));
     const childEditor = await screen.findByLabelText("Markdown 내용");
     fireEvent.change(childEditor, { target: { value: "# 자식 초안" } });
-    expect(screen.getByText("임시 초안 · 자동저장은 09단계에서 연결됩니다.")).toBeInTheDocument();
+    expect(screen.getAllByText("저장 대기 중").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByLabelText("시작 상세 열기"));
     expect(await screen.findByDisplayValue("# 루트 서버 내용")).toBeInTheDocument();
@@ -117,7 +120,7 @@ describe("MindmapEditor", () => {
     await waitFor(() => expect(fullscreenButton).toHaveFocus());
     expect(screen.getByLabelText("노드 상세 패널")).toBeInTheDocument();
     expect(viewport?.getAttribute("style")).toBe(viewportStyle);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("shows an actionable node content loading error", async () => {
@@ -199,7 +202,7 @@ describe("MindmapEditor", () => {
     fireEvent.click(screen.getByLabelText("시작에 자식 노드 추가"));
 
     expect(await screen.findByText("노드 생성 실패")).toBeInTheDocument();
-    expect(screen.getByText("다시 시도")).toBeInTheDocument();
+    expect(screen.getAllByText("다시 시도").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText("노드 제목")).not.toBeInTheDocument();
   });
 
@@ -297,6 +300,6 @@ describe("MindmapEditor", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(screen.getByText("저장 실패")).toBeInTheDocument());
     expect(input).toHaveValue("유지할 초안");
-    expect(screen.getByText("다시 시도")).toBeInTheDocument();
+    expect(screen.getAllByText("다시 시도").length).toBeGreaterThan(0);
   });
 });

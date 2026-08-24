@@ -76,7 +76,7 @@ describe("node domain services", () => {
       "오래된 수정",
       0,
       integrationClient,
-    )).rejects.toMatchObject({ code: "CONFLICT" });
+    )).rejects.toMatchObject({ code: "CONFLICT", details: { currentRevision: 1 } });
     await expect(updateNodeTitleForUser(
       owner.rootNode.id,
       stranger.user.id,
@@ -132,7 +132,7 @@ describe("node domain services", () => {
       0,
       1,
       integrationClient,
-    )).rejects.toMatchObject({ code: "CONFLICT" });
+    )).rejects.toMatchObject({ code: "CONFLICT", details: { currentRevision: 2 } });
     await expect(updateNodeCollapseForUser(
       child.id,
       stranger.user.id,
@@ -176,7 +176,7 @@ describe("node domain services", () => {
       "오래된 저장",
       0,
       integrationClient,
-    )).rejects.toMatchObject({ code: "CONFLICT" });
+    )).rejects.toMatchObject({ code: "CONFLICT", details: { currentRevision: 1 } });
 
     const mindmap = await integrationClient.mindmap.findUniqueOrThrow({
       where: { id: owner.mindmap.id },

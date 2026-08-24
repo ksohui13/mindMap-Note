@@ -81,13 +81,16 @@ describe("node position route", () => {
     expect(invalid.status).toBe(400);
 
     vi.mocked(updateNodePositionForUser).mockRejectedValue(
-      new DomainError("CONFLICT", "stale"),
+      new DomainError("CONFLICT", "stale", undefined, { currentRevision: 5 }),
     );
     const conflict = await patchPosition(
       request(`/api/nodes/${nodeId}/position`, { x: 1, y: 2, revision: 0 }),
       context,
     );
     expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      error: { code: "CONFLICT", details: { currentRevision: 5 } },
+    });
   });
 });
 
@@ -124,5 +127,20 @@ describe("node collapse route", () => {
       context,
     );
     expect(missing.status).toBe(404);
+  });
+
+  it("returns the current revision for a collapse conflict", async () => {
+    vi.mocked(updateNodeCollapseForUser).mockRejectedValue(
+      new DomainError("CONFLICT", "stale", undefined, { currentRevision: 6 }),
+    );
+    const conflict = await patchCollapse(
+      request(`/api/nodes/${nodeId}/collapse`, { isCollapsed: true, revision: 2 }),
+      context,
+    );
+
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      error: { code: "CONFLICT", details: { currentRevision: 6 } },
+    });
   });
 });

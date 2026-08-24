@@ -158,6 +158,7 @@ test.describe("mindmap editor canvas", () => {
     await page.getByLabel("시작 상세 열기").click();
     const markdown = page.getByLabel("Markdown 내용");
     await markdown.fill("# 집중 편집\n\n- 첫 항목");
+    await expect(page.getByText("저장 완료").first()).toBeVisible({ timeout: 5_000 });
     await page.getByRole("tab", { name: "미리보기" }).click();
     await expect(page.getByRole("heading", { name: "집중 편집" })).toBeVisible();
 
@@ -170,5 +171,9 @@ test.describe("mindmap editor canvas", () => {
     await expect(fullscreenButton).toBeFocused();
     await expect(page.getByLabel("노드 상세 패널")).toBeVisible();
     await expect(viewport).toHaveAttribute("style", viewportBefore ?? "");
+
+    await page.reload();
+    await page.getByLabel("시작 상세 열기").click();
+    await expect(page.getByLabel("Markdown 내용")).toHaveValue("# 집중 편집\n\n- 첫 항목");
   });
 });

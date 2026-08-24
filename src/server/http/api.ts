@@ -112,8 +112,20 @@ export function errorResponse(error: unknown): NextResponse {
         : error.code === "NOT_FOUND"
           ? 404
           : 409;
+    const currentRevision = error.details?.currentRevision;
+    const details = typeof currentRevision === "number" &&
+      Number.isInteger(currentRevision) &&
+      currentRevision >= 0
+      ? { currentRevision }
+      : undefined;
     return NextResponse.json(
-      { error: { code: error.code, message: error.message } },
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(details ? { details } : {}),
+        },
+      },
       { status },
     );
   }

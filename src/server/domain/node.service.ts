@@ -215,7 +215,17 @@ async function updateOwnedNodeWithRevision(
         data: { ...data, revision: { increment: 1 } },
       });
       if (result.count === 0) {
-        throw new DomainError("CONFLICT", "Node was changed by another request.");
+        const current = await transaction.node.findFirst({
+          where: { id: nodeId, mindmap: { userId } },
+          select: { revision: true },
+        });
+        if (!current) throw new DomainError("NOT_FOUND", "Node was not found.");
+        throw new DomainError(
+          "CONFLICT",
+          "Node was changed by another request.",
+          undefined,
+          { currentRevision: current.revision },
+        );
       }
 
       const updated = await transaction.node.findUniqueOrThrow({ where: { id: nodeId } });

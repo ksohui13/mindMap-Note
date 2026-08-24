@@ -19,21 +19,35 @@ export class ApiClientError extends Error {
     message: string,
     public readonly code = "UNKNOWN_ERROR",
     public readonly status = 0,
+    public readonly details?: Readonly<{ currentRevision?: number }>,
   ) {
     super(message);
     this.name = "ApiClientError";
   }
 }
 
-type ErrorEnvelope = { error?: { code?: string; message?: string } };
+type ErrorEnvelope = {
+  error?: {
+    code?: string;
+    message?: string;
+    details?: { currentRevision?: number };
+  };
+};
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as T & ErrorEnvelope;
   if (!response.ok) {
+    const currentRevision = body.error?.details?.currentRevision;
+    const details = typeof currentRevision === "number" &&
+      Number.isInteger(currentRevision) &&
+      currentRevision >= 0
+      ? { currentRevision }
+      : undefined;
     throw new ApiClientError(
       body.error?.message ?? "요청을 처리하지 못했습니다.",
       body.error?.code,
       response.status,
+      details,
     );
   }
   return body;
@@ -131,12 +145,14 @@ export async function fetchNodeContent(nodeId: string): Promise<NodeContentRespo
 export async function updateNodeContent(
   nodeId: string,
   input: UpdateNodeContentInput,
+  options?: Readonly<{ keepalive?: boolean }>,
 ): Promise<NodeContentResponse> {
   return parseResponse(
     await fetch(`/api/nodes/${nodeId}/content`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+      keepalive: options?.keepalive,
     }),
   );
 }
