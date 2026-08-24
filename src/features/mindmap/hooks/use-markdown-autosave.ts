@@ -257,6 +257,38 @@ export function useMarkdownAutosave({
     coordinator.forgetNodes(nodeIds);
   }, [clearTimer, coordinator, mindmapId, queryClient]);
 
+  const prepareExport = useCallback(async (
+    nodeIds: readonly string[],
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const targets = [...new Set(nodeIds)];
+    for (const nodeId of targets) {
+      if (recoveriesRef.current[nodeId]) {
+        return { ok: false, message: "복구할 로컬 초안을 먼저 적용하거나 서버본을 선택해 주세요." };
+      }
+      if (
+        coordinator.getCurrentRecord(nodeId, "title").phase === "failed" ||
+        coordinator.getCurrentRecord(nodeId, "content").phase === "failed"
+      ) {
+        return { ok: false, message: "저장 실패를 해결한 뒤 다시 내보내 주세요." };
+      }
+      clearTimer(nodeId);
+    }
+
+    await Promise.all(targets.map((nodeId) => flushRef.current(nodeId)));
+    await coordinator.waitForNodes(targets);
+
+    for (const nodeId of targets) {
+      if (
+        coordinator.getCurrentRecord(nodeId, "title").phase === "failed" ||
+        coordinator.getCurrentRecord(nodeId, "content").phase === "failed" ||
+        draftsRef.current[nodeId] !== undefined
+      ) {
+        return { ok: false, message: "대상 노드의 최신 내용을 저장하지 못했습니다. 저장을 재시도해 주세요." };
+      }
+    }
+    return { ok: true };
+  }, [clearTimer, coordinator]);
+
   return {
     drafts,
     changeDraft,
@@ -268,6 +300,7 @@ export function useMarkdownAutosave({
     pauseNodes,
     resumeNodes,
     discardNodes,
+    prepareExport,
     storageWarning,
   };
 }

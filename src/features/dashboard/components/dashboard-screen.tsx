@@ -11,6 +11,12 @@ import {
   useRenameMindmap,
 } from "@/features/dashboard/hooks/use-mindmaps";
 import type { MindmapSummaryDTO } from "@/features/mindmap/api/contracts";
+import { ExportModal, type ExportPreparationResult } from "@/features/mindmap/components/export-modal";
+import {
+  findUnresolvedExportDrafts,
+  formatUnresolvedDraftMessage,
+  getBrowserStorage,
+} from "@/features/mindmap/lib/export-preflight";
 import { DeleteConfirmModal } from "@/shared/ui/delete-confirm-modal";
 
 export function formatMindmapUpdatedAt(value: string) {
@@ -141,6 +147,20 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
   const cancelledRef = useRef(false);
   const deleteInFlight = useRef(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+
+  async function prepareExport(): Promise<ExportPreparationResult> {
+    const unresolved = await findUnresolvedExportDrafts({
+      storage: getBrowserStorage(),
+      mindmapId: mindmap.id,
+    });
+    return unresolved.length === 0
+      ? { ok: true }
+      : {
+          ok: false,
+          message: formatUnresolvedDraftMessage(unresolved.map((draft) => draft.title)),
+        };
+  }
 
   function beginRename() {
     setDraft(mindmap.title);
@@ -227,6 +247,13 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
                 <button type="button" onClick={beginRename} className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--background)]">이름 변경</button>
                 <button
                   type="button"
+                  onClick={() => setExportOpen(true)}
+                  className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--background)]"
+                >
+                  Markdown 내보내기
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     deleteMindmap.reset();
                     setDeleteOpen(true);
@@ -258,6 +285,14 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
           if (!open) deleteMindmap.reset();
         }}
         onConfirm={() => void confirmDelete()}
+      />
+      <ExportModal
+        open={exportOpen}
+        mindmapId={mindmap.id}
+        mindmapTitle={mindmap.title}
+        defaultScope="ALL"
+        prepareExport={prepareExport}
+        onOpenChange={setExportOpen}
       />
     </article>
   );

@@ -73,6 +73,30 @@ describe("markdown autosave", () => {
     expect(localStorage.getItem(draftJournalKey("map-a", "node-a"))).toBeNull();
   });
 
+  it("flushes a dirty target immediately and waits for export readiness", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const input = JSON.parse(String(init?.body)) as { contentMd: string; revision: number };
+      return new Response(JSON.stringify({
+        node: { ...serverContent.node, contentMd: input.contentMd, revision: input.revision + 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderAutosaveHook();
+
+    act(() => result.current.autosave.changeDraft("node-a", "export latest"));
+    let prepared!: Awaited<ReturnType<typeof result.current.autosave.prepareExport>>;
+    await act(async () => {
+      prepared = await result.current.autosave.prepareExport(["node-a"]);
+    });
+
+    expect(prepared).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      contentMd: "export latest",
+    });
+    expect(localStorage.getItem(draftJournalKey("map-a", "node-a"))).toBeNull();
+  });
+
   it("pauses editing for a different local journal and applies it as dirty", async () => {
     writeDraftJournal(
       localStorage,

@@ -22,7 +22,8 @@ import {
   NodeDetailFullscreen,
   NodeDetailPanel,
 } from "@/features/mindmap/components/node-detail";
-import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
+import type { ExportScope, MindmapDetailResponse } from "@/features/mindmap/api/contracts";
+import { ExportModal, type ExportPreparationResult } from "@/features/mindmap/components/export-modal";
 import {
   useCreateNode,
   useUpdateNodeCollapse,
@@ -38,6 +39,11 @@ import {
   useNodeDeletionImpact,
 } from "@/features/mindmap/hooks/use-node-deletion";
 import { useNodeMutationCoordinator } from "@/features/mindmap/hooks/use-node-mutation-coordinator";
+import {
+  findUnresolvedExportDrafts,
+  formatUnresolvedDraftMessage,
+  getBrowserStorage,
+} from "@/features/mindmap/lib/export-preflight";
 import {
   toMindmapFlow,
   type MindmapFlowEdge,
@@ -115,6 +121,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const nodeMutationLocks = useRef(new Set<string>());
   const deleteInFlight = useRef(false);
   const [deleteTargetNodeId, setDeleteTargetNodeId] = useState<string | null>(null);
+  const [exportContext, setExportContext] = useState<Readonly<{
+    defaultScope: ExportScope;
+    node?: Readonly<{ id: string; title: string }>;
+  }> | null>(null);
 
   const saveCoordinator = useNodeMutationCoordinator(detail.data?.nodes ?? []);
   const deleteNodeMutation = useDeleteNode();
@@ -512,6 +522,53 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     setDeleteTargetNodeId(nodeId);
   }, [deleteNodeMutation, detail.data?.rootNodeId]);
 
+  const openHeaderExport = useCallback(() => {
+    const selected = selectedNodeId
+      ? detail.data?.nodes.find((node) => node.id === selectedNodeId)
+      : undefined;
+    setExportContext({
+      defaultScope: "ALL",
+      node: selected ? { id: selected.id, title: selected.title } : undefined,
+    });
+  }, [detail.data?.nodes, selectedNodeId]);
+
+  const openNodeExport = useCallback((nodeId: string) => {
+    const node = detail.data?.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    setExportContext({
+      defaultScope: "SUBTREE",
+      node: { id: node.id, title: node.title },
+    });
+  }, [detail.data?.nodes]);
+
+  const prepareExport = useCallback(async (scope: ExportScope): Promise<ExportPreparationResult> => {
+    if (!detail.data) return { ok: false, message: "마인드맵을 불러온 뒤 다시 시도해 주세요." };
+    const targetNodeId = exportContext?.node?.id;
+    if (scope !== "ALL" && !targetNodeId) {
+      return { ok: false, message: "내보낼 기준 노드를 선택해 주세요." };
+    }
+    const targetIds = scope === "ALL"
+      ? detail.data.nodes.map((node) => node.id)
+      : scope === "NODE"
+        ? [targetNodeId as string]
+        : [targetNodeId as string, ...getDescendantIds(detail.data.nodes, targetNodeId as string)];
+    const saved = await markdownAutosave.prepareExport(targetIds);
+    if (!saved.ok) return saved;
+
+    const targetSet = new Set(targetIds);
+    const unresolved = await findUnresolvedExportDrafts({
+      storage: getBrowserStorage(),
+      mindmapId,
+      nodeIds: targetSet,
+    });
+    return unresolved.length === 0
+      ? { ok: true }
+      : {
+          ok: false,
+          message: formatUnresolvedDraftMessage(unresolved.map((draft) => draft.title)),
+        };
+  }, [detail.data, exportContext?.node?.id, markdownAutosave, mindmapId]);
+
   const confirmDeleteNode = useCallback(async () => {
     if (
       deleteInFlight.current ||
@@ -586,6 +643,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         saveRecord={saveCoordinator.overall}
         onRetrySave={saveCoordinator.retryAll}
         onBeforeNavigate={() => markdownAutosave.flushAll()}
+        onExport={openHeaderExport}
       />
       <MindmapCanvas
         detail={{ ...detail.data, nodes: visibleNodes }}
@@ -617,6 +675,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         onStartEdit={startEdit}
         onToggleCollapse={toggleCollapse}
         onDelete={openDeleteNode}
+        onExport={openNodeExport}
         onRetryMutation={retryNodeMutation}
         onRevertMutation={revertNodeMutation}
         onNodesChange={changeNodePositions}
@@ -682,6 +741,19 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         }}
         onConfirm={() => void confirmDeleteNode()}
       />
+      {exportContext ? (
+        <ExportModal
+          open
+          mindmapId={mindmapId}
+          mindmapTitle={detail.data.mindmap.title}
+          node={exportContext.node}
+          defaultScope={exportContext.defaultScope}
+          prepareExport={prepareExport}
+          onOpenChange={(open) => {
+            if (!open) setExportContext(null);
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -693,6 +765,7 @@ function EditorHeader({
   saveRecord,
   onRetrySave,
   onBeforeNavigate,
+  onExport,
 }: {
   title: string;
   refreshFailed: boolean;
@@ -700,6 +773,7 @@ function EditorHeader({
   saveRecord: ReturnType<typeof useNodeMutationCoordinator>["overall"];
   onRetrySave: () => void;
   onBeforeNavigate: () => void;
+  onExport: () => void;
 }) {
   return (
     <header className="z-10 border-b border-[var(--border)] bg-white">
@@ -710,6 +784,9 @@ function EditorHeader({
         {refreshFailed ? (
           <button type="button" onClick={onRetry} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-[var(--danger)]">새로고침 실패 · 다시 시도</button>
         ) : null}
+        <button type="button" onClick={onExport} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:border-[var(--primary)] hover:text-[var(--primary)]">
+          내보내기
+        </button>
       </div>
     </header>
   );
@@ -736,6 +813,7 @@ function MindmapCanvas({
   onStartEdit,
   onToggleCollapse,
   onDelete,
+  onExport,
   onRetryMutation,
   onRevertMutation,
   onNodesChange,
@@ -761,6 +839,7 @@ function MindmapCanvas({
   onStartEdit: (nodeId: string) => void;
   onToggleCollapse: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
+  onExport: (nodeId: string) => void;
   onRetryMutation: (nodeId: string) => void;
   onRevertMutation: (nodeId: string) => void;
   onNodesChange: (changes: NodeChange<MindmapFlowNode>[]) => void;
@@ -785,6 +864,7 @@ function MindmapCanvas({
       onStartEdit,
       onToggleCollapse,
       onDelete,
+      onExport,
       onRetryMutation,
       onRevertMutation,
     }),
@@ -795,6 +875,7 @@ function MindmapCanvas({
       onRevertMutation,
       onToggleCollapse,
       onDelete,
+      onExport,
       parentNodeIds,
       pendingNodeIds,
       creatingParentId,

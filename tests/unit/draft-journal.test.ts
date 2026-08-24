@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDraftJournalEntry,
   draftJournalKey,
+  listMindmapDraftJournals,
   readDraftJournal,
   removeDraftJournal,
   removeMindmapDraftJournals,
@@ -67,5 +68,16 @@ describe("draft journal", () => {
     expect(readDraftJournal(localStorage, "map-a", "node-b")).toBeNull();
     expect(readDraftJournal(localStorage, "map-b", "node-a")?.contentMd).toBe("keep");
     expect(localStorage.getItem("unrelated")).toBe("keep");
+  });
+
+  it("lists only valid journals belonging to one mindmap", () => {
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-a", "node-a", "a", 0));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-a", "node-b", "b", 1));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-b", "node-a", "other", 0));
+
+    expect(listMindmapDraftJournals(localStorage, "map-a").map((entry) => entry.nodeId)).toEqual([
+      "node-a",
+      "node-b",
+    ]);
   });
 });

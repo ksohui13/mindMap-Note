@@ -61,7 +61,7 @@ describe("DashboardScreen", () => {
     expect(screen.getByText("노드 7개")).toBeInTheDocument();
     expect(screen.getByText(`${formatMindmapUpdatedAt(mindmap.updatedAt)} 수정`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "이름 변경" })).toBeInTheDocument();
-    expect(screen.queryByText("내보내기")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Markdown 내보내기" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "삭제" })).toBeInTheDocument();
   });
 

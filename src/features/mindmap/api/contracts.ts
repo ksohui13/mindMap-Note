@@ -129,6 +129,25 @@ export const deleteNodeInputSchema = z.object({
   expectedDeleteCount: z.number().int().positive("예상 삭제 수가 올바르지 않습니다."),
 });
 
+const exportFormatSchema = z.literal("MARKDOWN");
+
+export const exportMindmapInputSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("ALL"),
+    format: exportFormatSchema,
+  }).strict(),
+  z.object({
+    scope: z.literal("NODE"),
+    nodeId: nodeIdSchema,
+    format: exportFormatSchema,
+  }).strict(),
+  z.object({
+    scope: z.literal("SUBTREE"),
+    nodeId: nodeIdSchema,
+    format: exportFormatSchema,
+  }).strict(),
+]);
+
 export type UpdateMindmapInput = z.infer<typeof updateMindmapInputSchema>;
 export type DeleteMindmapInput = z.infer<typeof deleteMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
@@ -137,3 +156,5 @@ export type UpdateNodePositionInput = z.infer<typeof updateNodePositionInputSche
 export type UpdateNodeCollapseInput = z.infer<typeof updateNodeCollapseInputSchema>;
 export type UpdateNodeContentInput = z.infer<typeof updateNodeContentInputSchema>;
 export type DeleteNodeInput = z.infer<typeof deleteNodeInputSchema>;
+export type ExportMindmapInput = z.infer<typeof exportMindmapInputSchema>;
+export type ExportScope = ExportMindmapInput["scope"];

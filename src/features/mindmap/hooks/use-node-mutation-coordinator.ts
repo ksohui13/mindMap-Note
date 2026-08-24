@@ -23,6 +23,7 @@ export function useNodeMutationCoordinator(
   nodes: ReadonlyArray<Readonly<{ id: string; revision: number }>>,
 ) {
   const [records, setRecords] = useState<Readonly<Record<string, SaveRecord>>>({});
+  const recordsRef = useRef<Readonly<Record<string, SaveRecord>>>({});
   const revisions = useRef(new Map<string, number>());
   const tails = useRef(new Map<string, Promise<unknown>>());
   const sequences = useRef(new Map<string, number>());
@@ -40,9 +41,11 @@ export function useNodeMutationCoordinator(
 
   const setRecord = useCallback((nodeId: string, kind: SaveKind, record: SaveRecord) => {
     const key = saveRecordKey(nodeId, kind);
-    setRecords((current) => current[key] === record
-      ? current
-      : { ...current, [key]: record });
+    const current = recordsRef.current;
+    if (current[key] === record) return;
+    const next = { ...current, [key]: record };
+    recordsRef.current = next;
+    setRecords(next);
   }, []);
 
   const supersede = useCallback((nodeId: string, kind: SaveKind) => {
@@ -131,6 +134,20 @@ export function useNodeMutationCoordinator(
   const getRecord = useCallback((nodeId: string, kind: SaveKind) =>
     records[saveRecordKey(nodeId, kind)] ?? idleSaveRecord, [records]);
 
+  const getCurrentRecord = useCallback((nodeId: string, kind: SaveKind) =>
+    recordsRef.current[saveRecordKey(nodeId, kind)] ?? idleSaveRecord, []);
+
+  const waitForNodes = useCallback(async (nodeIds: readonly string[]) => {
+    const targets = new Set(nodeIds);
+    while (true) {
+      const pending = [...tails.current.entries()]
+        .filter(([nodeId]) => targets.has(nodeId))
+        .map(([, tail]) => tail);
+      if (pending.length === 0) return;
+      await Promise.all(pending);
+    }
+  }, []);
+
   const retry = useCallback((nodeId: string, kind: SaveKind) => {
     retries.current.get(saveRecordKey(nodeId, kind))?.();
   }, []);
@@ -149,12 +166,14 @@ export function useNodeMutationCoordinator(
         retries.current.delete(saveRecordKey(nodeId, kind));
       }
     }
-    setRecords((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => {
+    const nextRecords = Object.fromEntries(
+      Object.entries(recordsRef.current).filter(([key]) => {
         const separator = key.lastIndexOf(":");
         return separator < 0 || !forgotten.has(key.slice(0, separator));
       }),
-    ));
+    );
+    recordsRef.current = nextRecords;
+    setRecords(nextRecords);
   }, [supersede]);
 
   const overall = useMemo(() => aggregateSaveRecords(Object.values(records)), [records]);
@@ -164,6 +183,8 @@ export function useNodeMutationCoordinator(
     markDirty,
     markIdle,
     getRecord,
+    getCurrentRecord,
+    waitForNodes,
     retry,
     retryAll,
     forgetNodes,

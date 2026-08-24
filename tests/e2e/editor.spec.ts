@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { expect, test } from "@playwright/test";
 
 test.describe("mindmap editor canvas", () => {
@@ -142,7 +144,10 @@ test.describe("mindmap editor canvas", () => {
       await client.$disconnect();
     }
 
-    await expect(page.getByLabel("루트 개념 메뉴")).toHaveCount(0);
+    await expect(page.getByLabel("루트 개념 메뉴")).toHaveCount(1);
+    await page.getByLabel("루트 개념 메뉴").click();
+    await expect(page.getByRole("button", { name: "이 노드부터 내보내기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "삭제", exact: true })).toHaveCount(0);
     const viewportBeforeDelete = await page.locator(".react-flow__viewport").getAttribute("style");
     await page.getByLabel("첫 번째 자식 메뉴").click();
     await page.getByRole("button", { name: "삭제", exact: true }).click();
@@ -177,6 +182,18 @@ test.describe("mindmap editor canvas", () => {
     await page.getByLabel("시작 상세 열기").click();
     const markdown = page.getByLabel("Markdown 내용");
     await markdown.fill("# 집중 편집\n\n- 첫 항목");
+    await page.getByRole("button", { name: "내보내기" }).click();
+    const exportDialog = page.getByRole("dialog", { name: "Markdown 내보내기" });
+    await expect(exportDialog.getByLabel("전체 마인드맵")).toBeChecked();
+    await exportDialog.getByLabel("현재 노드만").check();
+    const downloadPromise = page.waitForEvent("download");
+    await exportDialog.getByRole("button", { name: "파일 생성" }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/-node\.md$/);
+    const exportPath = await download.path();
+    if (!exportPath) throw new Error("Export download path was unavailable.");
+    const exportedMarkdown = await readFile(exportPath, "utf8");
+    expect(exportedMarkdown).toContain("# 집중 편집\n\n- 첫 항목");
     await expect(page.getByText("저장 완료").first()).toBeVisible({ timeout: 5_000 });
     await page.getByRole("tab", { name: "미리보기" }).click();
     await expect(page.getByRole("heading", { name: "집중 편집" })).toBeVisible();

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { expect, test } from "@playwright/test";
 
 test.describe("dashboard lifecycle", () => {
@@ -28,6 +30,19 @@ test.describe("dashboard lifecycle", () => {
     await titleInput.fill("고객 인터뷰 정리");
     await titleInput.press("Enter");
     await expect(page.getByText("고객 인터뷰 정리")).toBeVisible();
+
+    await page.getByLabel("고객 인터뷰 정리 메뉴").click();
+    await page.getByRole("button", { name: "Markdown 내보내기" }).click();
+    const exportDialog = page.getByRole("dialog", { name: "Markdown 내보내기" });
+    await expect(exportDialog.getByLabel("전체 마인드맵")).toBeChecked();
+    await expect(exportDialog.getByLabel("현재 노드만")).toBeDisabled();
+    const downloadPromise = page.waitForEvent("download");
+    await exportDialog.getByRole("button", { name: "파일 생성" }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("고객 인터뷰 정리-all.md");
+    const exportPath = await download.path();
+    if (!exportPath) throw new Error("Export download path was unavailable.");
+    expect(await readFile(exportPath, "utf8")).toContain("# 고객 인터뷰 정리");
 
     await page.getByLabel("고객 인터뷰 정리 메뉴").click();
     await page.getByRole("button", { name: "삭제", exact: true }).click();

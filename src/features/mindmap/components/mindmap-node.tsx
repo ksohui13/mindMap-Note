@@ -125,7 +125,7 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
         >
           {data.isCreatingChild ? "…" : "+"}
         </button>
-        {!data.isRoot ? (
+        {data.onExport || !data.isRoot ? (
           <details
             className="relative"
             onClick={(event) => event.stopPropagation()}
@@ -136,14 +136,25 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
             >
               ⋯
             </summary>
-            <div className="absolute right-0 z-20 mt-1 w-24 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-lg">
-              <button
-                type="button"
-                onClick={() => data.onDelete?.(id)}
-                className="w-full rounded-md px-3 py-2 text-xs font-bold text-[var(--danger)] hover:bg-red-50"
-              >
-                삭제
-              </button>
+            <div className="absolute right-0 z-20 mt-1 w-40 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-lg">
+              {data.onExport ? (
+                <button
+                  type="button"
+                  onClick={() => data.onExport?.(id)}
+                  className="w-full rounded-md px-3 py-2 text-left text-xs font-bold hover:bg-[var(--background)]"
+                >
+                  이 노드부터 내보내기
+                </button>
+              ) : null}
+              {!data.isRoot ? (
+                <button
+                  type="button"
+                  onClick={() => data.onDelete?.(id)}
+                  className="w-full rounded-md px-3 py-2 text-left text-xs font-bold text-[var(--danger)] hover:bg-red-50"
+                >
+                  삭제
+                </button>
+              ) : null}
             </div>
           </details>
         ) : null}

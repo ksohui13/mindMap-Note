@@ -3,7 +3,7 @@
 > 문서 버전: 1.1  
 > 작성일: 2026-08-18  
 > 최종 수정일: 2026-08-24
-> 현재 저장소 상태: 10단계 안전 삭제까지 구현 완료, PostgreSQL 기반 통합 인수 검증은 12단계에 누적
+> 현재 저장소 상태: 11단계 범위별 Markdown 내보내기까지 구현 완료, PostgreSQL 기반 통합 인수 검증은 12단계에 누적
 > 목표: 개인용 마인드맵 작성, 노드별 Markdown 기록, 안정적 저장·복원, 범위별 Markdown 내보내기가 실제로 동작하는 First Usable Version 완성
 
 ## 운영 규칙
@@ -683,7 +683,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 11. 범위별 Markdown 내보내기 — ⬜ TODO
+## 11. 범위별 Markdown 내보내기 — ✅ DONE
 
 ### Goal
 
@@ -720,6 +720,28 @@ DEFERRED TO 12 / NOT VERIFIED
 - modal component test: 진입점별 기본값, disabled option, 오류/중복 제출
 - Playwright로 세 범위 파일을 다운로드하고 파일 내용을 읽어 구조·경로·상세 일치 확인
 - lint, typecheck, test, build 및 실제 `.md` 열기 확인
+
+### 구현 결과
+
+- strict scope 계약과 same-origin/session/소유권 검증을 적용한 `POST /api/mindmaps/:mindmapId/export`를 구현했다.
+- repeatable-read transaction에서 tree metadata와 대상 content를 읽고 `createdAt → id` 순서의 안정적인 preorder Markdown을 생성한다.
+- 제목·tree·경로 문법만 escape하고 Node의 `contentMd`는 LF 기반 원문 그대로 포함한다. 빈 본문도 경로와 빈 내용 표시를 갖는다.
+- Windows 금지문자·예약어·빈 제목·길이를 방어한 Unicode 파일명과 ASCII fallback을 함께 반환한다.
+- Dashboard, Editor 상단, 모든 Node 메뉴에 Radix Dialog 기반 ExportModal을 연결했다. root Node는 export 메뉴만 제공한다.
+- Editor export는 대상 node의 dirty content를 즉시 flush하고 mutation queue를 기다리며 failed 저장이나 미해결 recovery가 있으면 중단한다.
+- Dashboard와 Editor 모두 local journal을 서버 content와 비교해 동일한 journal은 정리하고 다른 recovery draft는 제목·개수와 함께 차단한다.
+- Blob URL 다운로드 후 URL을 해제하며, 동일 modal에서 빠른 이중 요청을 synchronous lock으로 막는다.
+
+```text
+NOT VERIFIED — 12단계로 이관
+
+- 실제 PostgreSQL에서 ALL/NODE/SUBTREE 대상·소유권·다른 Mindmap node 404·repeatable-read snapshot integration test 실행
+- 실제 Chromium에서 Dashboard ALL, Editor NODE/SUBTREE 다운로드 파일명·UTF-8 본문·sibling 제외 검증
+- dirty Markdown 즉시 저장→최신 내용 export, recovery journal 차단·동일 journal 정리 E2E 실행
+- 사유: PostgreSQL localhost:5432 IPv4/IPv6 연결 거부. Playwright DB 의존 5개는 skip 조건이며 foundation 실행은 DB session 대기 때문에 수동 중단
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 11을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성했으며 실제 DB/browser 검증 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -801,6 +823,7 @@ DEFERRED TO 12 / NOT VERIFIED
 | 08 | NOT VERIFIED | 실제 DB content/revision/소유권/256KiB integration, Markdown 작성·GFM preview·fullscreen 왕복 Playwright, viewport·focus·반응형·브라우저 시각/console 확인 |
 | 09 | NOT VERIFIED | 실제 DB 공유 node revision/409 currentRevision/updatedAt integration, 2초 autosave·A/B 전환·flush·실패 재시도·pagehide journal 복구·reload 영속성 Playwright, 브라우저 Network/console 확인 |
 | 10 | NOT VERIFIED | 실제 DB subtree impact/삭제·root/소유권/stale count rollback·Mindmap cascade/sequence 재사용·동시 생성 잠금 integration, Node/Mindmap 안전 삭제·reload Playwright, modal focus/브라우저 console 확인 |
+| 11 | NOT VERIFIED | 실제 DB ALL/NODE/SUBTREE·안정 preorder·소유권·snapshot integration, Dashboard/Editor 파일 다운로드·UTF-8 내용·dirty 저장 대기·recovery 차단 Playwright, 브라우저 파일 열기/console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -820,14 +843,14 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 08. Markdown 상세 UI | ✅ DONE | 노드별 상세 조회·격리 draft·GFM 미리보기·전체화면 집중 편집 구현 |
 | 09. 자동저장·오류 복구 | ✅ DONE | node별 직렬 저장·2초 debounce·실제 저장 상태·local draft 복구 구현 |
 | 10. 안전한 삭제 | ✅ DONE | 최신 영향 수 확인·범위 고정 transaction·draft/cache 정리를 포함한 Mindmap/Node 영구 삭제 구현 |
-| 11. Markdown 내보내기 | ⬜ TODO | ALL/NODE/SUBTREE UTF-8 파일 다운로드 |
+| 11. Markdown 내보내기 | ✅ DONE | snapshot 기반 ALL/NODE/SUBTREE Markdown 생성·저장 선행·recovery 차단·UTF-8 다운로드 구현 |
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 10
+- 완료: 11
 - 진행 중: 0
 - 차단: 0
-- 남음: 2
+- 남음: 1
 
 ## Decision Log
 
@@ -874,6 +897,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-24 | 10 | 삭제 영향 수를 expected count로 다시 보내 transaction 안에서 재검증 | modal을 연 뒤 subtree나 Mindmap node 수가 바뀌었을 때 사용자가 확인하지 않은 범위까지 영구 삭제되는 것을 막기 위함 |
 | 2026-08-24 | 10 | Node 생성과 Node/Mindmap 삭제가 같은 Mindmap 행 잠금을 공유 | 생성 쪽 격리 수준과 무관하게 삭제 범위 계산 중 동시 child 생성이 끼어드는 경쟁 조건을 명시적으로 직렬화하기 위함 |
 | 2026-08-24 | 10 | 삭제 성공 전 draft/journal 보존, 성공 후 tombstone과 subtree 일괄 폐기 | 실패 시 작성 내용을 잃지 않으면서 늦은 저장 응답이 삭제된 node cache와 저장 상태를 되살리는 것을 방지하기 위함 |
+| 2026-08-24 | 11 | export 문서는 repeatable-read 서버 snapshot만 사용 | client draft를 문서에 임의 병합하지 않고 저장 성공이 확인된 하나의 일관된 tree/content 시점을 제공하기 위함 |
+| 2026-08-24 | 11 | Editor export 전에 대상 mutation queue와 최신 Markdown 저장을 완료 | 사용자가 보는 dirty 내용이 누락된 서버본 파일을 성공처럼 다운로드하지 않기 위함 |
+| 2026-08-24 | 11 | 다른 recovery journal은 export를 차단하고 동일 journal만 조용히 제거 | 자동 적용·무시로 미저장 내용을 잃는 위험 없이 서버와 동일한 잔여 record만 안전하게 정리하기 위함 |
 
 ## Surprises & Discoveries
 

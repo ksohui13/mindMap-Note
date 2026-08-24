@@ -25,6 +25,7 @@ export type MindmapNodeData = {
   onStartEdit?: (nodeId: string) => void;
   onToggleCollapse?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
+  onExport?: (nodeId: string) => void;
   onRetryMutation?: (nodeId: string) => void;
   onRevertMutation?: (nodeId: string) => void;
 };
@@ -53,6 +54,7 @@ export function toMindmapFlow(
     onStartEdit: (nodeId: string) => void;
     onToggleCollapse: (nodeId: string) => void;
     onDelete: (nodeId: string) => void;
+    onExport: (nodeId: string) => void;
     onRetryMutation: (nodeId: string) => void;
     onRevertMutation: (nodeId: string) => void;
   }>,
@@ -106,6 +108,7 @@ export function toMindmapFlow(
         onStartEdit: interaction?.onStartEdit,
         onToggleCollapse: interaction?.onToggleCollapse,
         onDelete: interaction?.onDelete,
+        onExport: interaction?.onExport,
         onRetryMutation: interaction?.onRetryMutation,
         onRevertMutation: interaction?.onRevertMutation,
       },

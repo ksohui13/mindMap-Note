@@ -56,7 +56,7 @@ describe("MindmapEditor", () => {
     expect(canvas).toHaveAttribute("data-nodes-draggable", "true");
     expect(canvas).toHaveAttribute("data-nodes-connectable", "false");
     expect(canvas).toHaveAttribute("data-delete-enabled", "false");
-    expect(screen.queryByLabelText("시작 메뉴")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("시작 메뉴")).toBeInTheDocument();
     expect(screen.getByLabelText("자식 메뉴")).toBeInTheDocument();
 
     await waitFor(() => expect(container.querySelectorAll(".react-flow__edge")).toHaveLength(1));
@@ -117,7 +117,9 @@ describe("MindmapEditor", () => {
     const childMenu = screen.getByLabelText("자식 메뉴").parentElement;
     expect(childMenu).not.toBeNull();
     fireEvent.click(screen.getByLabelText("자식 메뉴"));
-    fireEvent.click((childMenu as HTMLElement).querySelector("button") as HTMLButtonElement);
+    const deleteButton = [...(childMenu as HTMLElement).querySelectorAll("button")]
+      .find((button) => button.textContent === "삭제");
+    fireEvent.click(deleteButton as HTMLButtonElement);
 
     const dialog = await screen.findByRole("alertdialog");
     expect(await within(dialog).findByText("하위 개념 1개도 함께 삭제됩니다.")).toBeInTheDocument();

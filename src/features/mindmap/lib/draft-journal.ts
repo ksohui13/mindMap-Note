@@ -109,6 +109,27 @@ export function removeMindmapDraftJournals(
   }
 }
 
+export function listMindmapDraftJournals(
+  storage: Storage | null,
+  mindmapId: string,
+): DraftJournalEntry[] {
+  if (!storage) return [];
+  const prefix = `${DRAFT_KEY_PREFIX}${mindmapId}:`;
+  try {
+    const nodeIds: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(prefix)) nodeIds.push(key.slice(prefix.length));
+    }
+    return nodeIds.flatMap((nodeId) => {
+      const entry = readDraftJournal(storage, mindmapId, nodeId);
+      return entry ? [entry] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function tryRemove(storage: StorageLike, key: string): void {
   try {
     storage.removeItem(key);
