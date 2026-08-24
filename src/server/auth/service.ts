@@ -3,6 +3,7 @@ import "server-only";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { LoginInput, SignupInput } from "@/features/auth/model/validation";
 import { prisma } from "@/server/db/client";
+import type { DatabaseClient } from "@/server/db/types";
 import { DomainError } from "@/server/domain/errors";
 import { createSession, deleteSessionByTokenHash } from "@/server/domain/session.repository";
 import { createUser, findUserByEmail } from "@/server/domain/user.repository";
@@ -23,6 +24,25 @@ function createSessionMaterial() {
     token,
     tokenHash: hashSessionToken(token),
     expiresAt: new Date(Date.now() + SESSION_DURATION_MS),
+  };
+}
+
+export async function createSessionForUser(
+  user: Readonly<{ id: string; email: string }>,
+  client: DatabaseClient = prisma,
+): Promise<AuthResult> {
+  const session = createSessionMaterial();
+  await createSession(
+    {
+      userId: user.id,
+      tokenHash: session.tokenHash,
+      expiresAt: session.expiresAt,
+    },
+    client,
+  );
+  return {
+    user: { id: user.id, email: user.email },
+    session: { token: session.token, expiresAt: session.expiresAt },
   };
 }
 

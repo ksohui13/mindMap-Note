@@ -67,4 +67,24 @@ describe("AuthScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("이메일 또는 비밀번호가 올바르지 않습니다.");
     expect(screen.getByLabelText("이메일")).toHaveValue("user@example.test");
   });
+
+  it("shows only configured OAuth providers and prevents repeat navigation", () => {
+    render(
+      <AuthScreen
+        enabledOAuthProviders={["google"]}
+        oauthError="소셜 로그인이 취소되었습니다."
+      />,
+    );
+
+    const google = screen.getByRole("link", { name: "Google로 계속" });
+    expect(google).toHaveAttribute("href", "/api/auth/oauth/google/start");
+    expect(screen.queryByRole("link", { name: "카카오로 계속" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("소셜 로그인이 취소되었습니다.");
+
+    fireEvent.click(google);
+    expect(screen.getByRole("link", { name: "이동 중..." })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
 });

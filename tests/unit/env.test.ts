@@ -28,4 +28,14 @@ describe("parseServerEnv", () => {
       parseDatabaseEnv({ DATABASE_URL: "postgresql://localhost/mindmap" }),
     ).toEqual({ DATABASE_URL: "postgresql://localhost/mindmap" });
   });
+
+  it("requires OAuth client IDs and secrets in pairs", () => {
+    expect(() =>
+      parseServerEnv({
+        DATABASE_URL: "postgresql://localhost/mindmap",
+        SESSION_SECRET: "a-secure-session-secret-with-32-chars",
+        GOOGLE_CLIENT_ID: "google-client",
+      }),
+    ).toThrow(/configured together/);
+  });
 });

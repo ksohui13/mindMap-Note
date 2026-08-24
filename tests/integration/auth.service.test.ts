@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { requireOwnedMindmap } from "@/server/auth/authorization";
 import { login, logout, signup } from "@/server/auth/service";
+import { completeOAuthIdentity } from "@/server/auth/oauth-service";
 import { getCurrentUserFromToken } from "@/server/auth/session";
 import { hashSessionToken } from "@/server/auth/token";
 import { createMindmapWithRoot } from "@/server/domain/mindmap.service";
@@ -103,5 +104,48 @@ describe("authentication services", () => {
     await expect(
       requireOwnedMindmap("00000000-0000-0000-0000-000000000000", viewer.user.id, integrationClient),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("creates and reuses an OAuth-only account with the existing session model", async () => {
+    const first = await completeOAuthIdentity(
+      {
+        provider: "google",
+        providerAccountId: "google-subject-1",
+        email: "oauth@example.test",
+      },
+      integrationClient,
+    );
+    expect(first.user.email).toBe("oauth@example.test");
+    expect(await integrationClient.user.findUnique({
+      where: { id: first.user.id },
+      select: { passwordHash: true },
+    })).toEqual({ passwordHash: null });
+
+    const second = await completeOAuthIdentity(
+      {
+        provider: "google",
+        providerAccountId: "google-subject-1",
+        email: "changed@example.test",
+      },
+      integrationClient,
+    );
+    expect(second.user).toEqual(first.user);
+    expect(second.session.token).not.toBe(first.session.token);
+  });
+
+  it("does not automatically link OAuth to an existing email account", async () => {
+    await signup(
+      { email: "collision@example.test", password: "password123" },
+      integrationClient,
+    );
+    await expect(completeOAuthIdentity(
+      {
+        provider: "kakao",
+        providerAccountId: "kakao-subject-1",
+        email: "collision@example.test",
+      },
+      integrationClient,
+    )).rejects.toMatchObject({ code: "OAUTH_ACCOUNT_CONFLICT" });
+    expect(await integrationClient.oAuthAccount.count()).toBe(0);
   });
 });

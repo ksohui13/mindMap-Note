@@ -7,6 +7,7 @@ import {
   loginInputSchema,
   signupInputSchema,
 } from "@/features/auth/model/validation";
+import type { OAuthProvider } from "@/shared/auth/oauth";
 
 type AuthMode = "login" | "signup";
 type FieldErrors = Partial<Record<"email" | "password", string>>;
@@ -16,6 +17,11 @@ type ApiFailure = {
     fieldErrors?: Record<string, string[] | undefined>;
   };
 };
+
+type AuthScreenProps = Readonly<{
+  enabledOAuthProviders?: readonly OAuthProvider[];
+  oauthError?: string;
+}>;
 
 function BrandMark() {
   return (
@@ -62,15 +68,19 @@ function MindmapPreview() {
   );
 }
 
-export function AuthScreen() {
+export function AuthScreen({
+  enabledOAuthProviders = [],
+  oauthError = "",
+}: AuthScreenProps = {}) {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [formError, setFormError] = useState("");
+  const [formError, setFormError] = useState(oauthError);
   const [pending, setPending] = useState(false);
+  const [oauthPending, setOAuthPending] = useState<OAuthProvider | null>(null);
 
   function changeMode(nextMode: AuthMode) {
     setMode(nextMode);
@@ -150,7 +160,45 @@ export function AuthScreen() {
           })}
         </div>
 
-        <form className="mt-9 space-y-6" onSubmit={handleSubmit} noValidate>
+        {enabledOAuthProviders.length > 0 && (
+          <div className="mt-8 space-y-3" aria-label="소셜 로그인">
+            {enabledOAuthProviders.map((provider) => {
+              const label = provider === "google" ? "Google로 계속" : "카카오로 계속";
+              const isPending = oauthPending === provider;
+              return (
+                <a
+                  key={provider}
+                  href={`/api/auth/oauth/${provider}/start`}
+                  aria-disabled={oauthPending !== null}
+                  onClick={(event) => {
+                    if (oauthPending !== null) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setOAuthPending(provider);
+                  }}
+                  className={`flex h-13 w-full items-center justify-center gap-3 rounded-xl border font-semibold transition ${
+                    provider === "kakao"
+                      ? "border-[#fee500] bg-[#fee500] text-[#191919] hover:bg-[#f6df00]"
+                      : "border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[#b7bac6]"
+                  } ${oauthPending !== null ? "pointer-events-none opacity-60" : ""}`}
+                >
+                  <span aria-hidden="true" className="grid size-6 place-items-center rounded-full bg-white/80 text-xs font-extrabold">
+                    {provider === "google" ? "G" : "K"}
+                  </span>
+                  {isPending ? "이동 중..." : label}
+                </a>
+              );
+            })}
+            <div className="flex items-center gap-3 py-2 text-xs text-[var(--muted)]" aria-hidden="true">
+              <span className="h-px flex-1 bg-[var(--border)]" />
+              <span>또는 이메일로 계속</span>
+              <span className="h-px flex-1 bg-[var(--border)]" />
+            </div>
+          </div>
+        )}
+
+        <form className={enabledOAuthProviders.length > 0 ? "mt-3 space-y-6" : "mt-9 space-y-6"} onSubmit={handleSubmit} noValidate>
           <div>
             <label htmlFor="email" className="mb-2 block font-semibold">이메일</label>
             <input id="email" name="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} aria-invalid={Boolean(fieldErrors.email)} aria-describedby={fieldErrors.email ? "email-error" : undefined} placeholder="이메일을 입력하세요" className="h-14 w-full rounded-xl border border-[var(--border)] bg-white px-4 transition placeholder:text-[#a0a4b5] focus:border-[var(--primary)] focus:outline-none" />

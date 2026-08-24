@@ -8,13 +8,39 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique @db.VarChar(320)
-  passwordHash String    @db.VarChar(255)
-  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime  @updatedAt @db.Timestamptz(3)
-  sessions     Session[]
-  mindmaps     Mindmap[]
+  id            String         @id @default(uuid()) @db.Uuid
+  email         String         @unique @db.VarChar(320)
+  passwordHash  String?        @db.VarChar(255)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
+  sessions      Session[]
+  oauthAccounts OAuthAccount[]
+  mindmaps      Mindmap[]
+}
+
+model OAuthAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  provider          String   @db.VarChar(20)
+  providerAccountId String   @db.VarChar(255)
+  userId            String   @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model OAuthAttempt {
+  id           String   @id @default(uuid()) @db.Uuid
+  stateHash    String   @unique @db.Char(64)
+  provider     String   @db.VarChar(20)
+  codeVerifier String   @db.VarChar(128)
+  nonce        String   @db.VarChar(128)
+  expiresAt    DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([expiresAt])
 }
 
 model Session {
