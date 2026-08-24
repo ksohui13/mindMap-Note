@@ -44,6 +44,19 @@ export type UpdateNodeResponse = Readonly<{
   node: MindmapNodeDTO;
 }>;
 
+export const NODE_CONTENT_MAX_BYTES = 256 * 1_024;
+
+export type NodeContentDTO = Readonly<{
+  id: string;
+  title: string;
+  contentMd: string;
+  revision: number;
+}>;
+
+export type NodeContentResponse = Readonly<{
+  node: NodeContentDTO;
+}>;
+
 export const updateMindmapInputSchema = z.object({
   title: z
     .string()
@@ -84,8 +97,17 @@ export const updateNodeCollapseInputSchema = z.object({
   revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
 });
 
+export const updateNodeContentInputSchema = z.object({
+  contentMd: z.string().refine(
+    (value) => new TextEncoder().encode(value).byteLength <= NODE_CONTENT_MAX_BYTES,
+    "Markdown 내용은 UTF-8 기준 256KiB 이하여야 합니다.",
+  ),
+  revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
+});
+
 export type UpdateMindmapInput = z.infer<typeof updateMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
 export type UpdateNodeTitleInput = z.infer<typeof updateNodeTitleInputSchema>;
 export type UpdateNodePositionInput = z.infer<typeof updateNodePositionInputSchema>;
 export type UpdateNodeCollapseInput = z.infer<typeof updateNodeCollapseInputSchema>;
+export type UpdateNodeContentInput = z.infer<typeof updateNodeContentInputSchema>;

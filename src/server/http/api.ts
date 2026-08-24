@@ -4,7 +4,7 @@ import type { ZodError } from "zod";
 import { AuthError } from "@/server/auth/errors";
 import { DomainError } from "@/server/domain/errors";
 
-const MAX_JSON_BODY_BYTES = 16 * 1_024;
+const DEFAULT_MAX_JSON_BODY_BYTES = 16 * 1_024;
 
 export type ApiErrorCode =
   | "EMAIL_ALREADY_EXISTS"
@@ -47,19 +47,22 @@ export function assertSameOrigin(request: Request): void {
   }
 }
 
-export async function readJsonBody(request: Request): Promise<unknown> {
+export async function readJsonBody(
+  request: Request,
+  maxBytes = DEFAULT_MAX_JSON_BODY_BYTES,
+): Promise<unknown> {
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
   if (!contentType.startsWith("application/json")) {
     throw new ApiError(400, "INVALID_REQUEST", "JSON 요청만 지원합니다.");
   }
 
   const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_JSON_BODY_BYTES) {
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw new ApiError(413, "PAYLOAD_TOO_LARGE", "요청 본문이 너무 큽니다.");
   }
 
   const body = await request.text();
-  if (new TextEncoder().encode(body).byteLength > MAX_JSON_BODY_BYTES) {
+  if (new TextEncoder().encode(body).byteLength > maxBytes) {
     throw new ApiError(413, "PAYLOAD_TOO_LARGE", "요청 본문이 너무 큽니다.");
   }
 
@@ -70,12 +73,15 @@ export async function readJsonBody(request: Request): Promise<unknown> {
   }
 }
 
-export function validationErrorResponse(error: ZodError): NextResponse {
+export function validationErrorResponse(
+  error: ZodError,
+  message = "입력값을 확인해 주세요.",
+): NextResponse {
   return NextResponse.json(
     {
       error: {
         code: "VALIDATION_ERROR",
-        message: "입력값을 확인해 주세요.",
+        message,
         fieldErrors: error.flatten().fieldErrors,
       },
     },

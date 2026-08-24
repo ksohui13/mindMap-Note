@@ -6,8 +6,10 @@ import {
   createChildNode,
   createChildNodeForUser,
   deleteNodeSubtree,
+  getNodeContentForUser,
   updateNode,
   updateNodeCollapseForUser,
+  updateNodeContentForUser,
   updateNodePositionForUser,
   updateNodeTitleForUser,
 } from "@/server/domain/node.service";
@@ -138,6 +140,48 @@ describe("node domain services", () => {
       2,
       integrationClient,
     )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("reads and updates Markdown only for its owner and matching revision", async () => {
+    const owner = await createTreeOwner("content-owner@example.test");
+    const stranger = await createTreeOwner("content-stranger@example.test");
+    const oldTimestamp = new Date("2000-01-01T00:00:00.000Z");
+    await integrationClient.mindmap.update({
+      where: { id: owner.mindmap.id },
+      data: { updatedAt: oldTimestamp },
+    });
+
+    await expect(getNodeContentForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      integrationClient,
+    )).resolves.toMatchObject({ contentMd: "", revision: 0 });
+    await expect(getNodeContentForUser(
+      owner.rootNode.id,
+      stranger.user.id,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const updated = await updateNodeContentForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      "# 상세",
+      0,
+      integrationClient,
+    );
+    expect(updated).toMatchObject({ contentMd: "# 상세", revision: 1 });
+    await expect(updateNodeContentForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      "오래된 저장",
+      0,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const mindmap = await integrationClient.mindmap.findUniqueOrThrow({
+      where: { id: owner.mindmap.id },
+    });
+    expect(mindmap.updatedAt.getTime()).toBeGreaterThan(oldTimestamp.getTime());
   });
 
   it("rejects a parent from another mindmap", async () => {

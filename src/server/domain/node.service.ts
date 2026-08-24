@@ -183,6 +183,7 @@ export function updateNodeTitle(
 
 type OwnedNodeMutation = {
   title?: string;
+  contentMd?: string;
   x?: number;
   y?: number;
   isCollapsed?: boolean;
@@ -271,6 +272,36 @@ export function updateNodeCollapseForUser(
     userId,
     revision,
     { isCollapsed },
+    client,
+  );
+}
+
+export async function getNodeContentForUser(
+  nodeId: string,
+  userId: string,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  const node = await client.node.findFirst({
+    where: { id: nodeId, mindmap: { userId } },
+  });
+  if (!node) {
+    throw new DomainError("NOT_FOUND", "Node was not found.");
+  }
+  return node;
+}
+
+export function updateNodeContentForUser(
+  nodeId: string,
+  userId: string,
+  contentMd: string,
+  revision: number,
+  client: PrismaClient = prisma,
+): Promise<Node> {
+  return updateOwnedNodeWithRevision(
+    nodeId,
+    userId,
+    revision,
+    { contentMd },
     client,
   );
 }

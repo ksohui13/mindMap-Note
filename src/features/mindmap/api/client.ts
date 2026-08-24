@@ -4,10 +4,12 @@ import type {
   CreateMindmapResponse,
   MindmapDetailResponse,
   MindmapListResponse,
+  NodeContentResponse,
   UpdateMindmapInput,
   UpdateMindmapResponse,
   UpdateNodeResponse,
   UpdateNodeCollapseInput,
+  UpdateNodeContentInput,
   UpdateNodePositionInput,
   UpdateNodeTitleInput,
 } from "./contracts";
@@ -113,6 +115,25 @@ export async function updateNodeCollapse(
 ): Promise<UpdateNodeResponse> {
   return parseResponse(
     await fetch(`/api/nodes/${nodeId}/collapse`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function fetchNodeContent(nodeId: string): Promise<NodeContentResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/content`, { cache: "no-store" }),
+  );
+}
+
+export async function updateNodeContent(
+  nodeId: string,
+  input: UpdateNodeContentInput,
+): Promise<NodeContentResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/content`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),

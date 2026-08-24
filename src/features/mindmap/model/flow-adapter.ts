@@ -18,6 +18,7 @@ export type MindmapNodeData = {
   mutationError?: { kind: "position" | "collapse"; message: string } | null;
   childCreateError?: string | null;
   onAddChild?: (nodeId: string) => void;
+  onOpenDetail?: (nodeId: string) => void;
   onCancelEdit?: () => void;
   onChangeDraft?: (value: string) => void;
   onCommitEdit?: () => void;
@@ -44,6 +45,7 @@ export function toMindmapFlow(
     nodesWithChildren: ReadonlySet<string>;
     mutationErrors: Readonly<Record<string, { kind: "position" | "collapse"; message: string }>>;
     onAddChild: (nodeId: string) => void;
+    onOpenDetail: (nodeId: string) => void;
     onCancelEdit: () => void;
     onChangeDraft: (value: string) => void;
     onCommitEdit: () => void;
@@ -95,6 +97,7 @@ export function toMindmapFlow(
             ? interaction.childCreateError.message
             : null,
         onAddChild: interaction?.onAddChild,
+        onOpenDetail: interaction?.onOpenDetail,
         onCancelEdit: interaction?.onCancelEdit,
         onChangeDraft: interaction?.onChangeDraft,
         onCommitEdit: interaction?.onCommitEdit,

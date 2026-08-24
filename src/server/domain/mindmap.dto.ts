@@ -4,6 +4,7 @@ import type {
   MindmapDetailResponse,
   MindmapNodeDTO,
   MindmapSummaryDTO,
+  NodeContentDTO,
 } from "@/features/mindmap/api/contracts";
 import type { Node } from "@/generated/prisma/client";
 import type { getMindmapDetailForUser } from "./mindmap.service";
@@ -42,6 +43,15 @@ export function toMindmapNodeDTO(node: Node): MindmapNodeDTO {
     x: node.x,
     y: node.y,
     isCollapsed: node.isCollapsed,
+    revision: node.revision,
+  };
+}
+
+export function toNodeContentDTO(node: Node): NodeContentDTO {
+  return {
+    id: node.id,
+    title: node.title,
+    contentMd: node.contentMd,
     revision: node.revision,
   };
 }

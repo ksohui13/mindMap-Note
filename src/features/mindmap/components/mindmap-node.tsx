@@ -81,6 +81,19 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
       )}
       {data.isRoot ? <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-violet-100">Root</p> : null}
       <div className="nodrag mt-2 flex items-center justify-center gap-1.5">
+        <button
+          type="button"
+          aria-label={`${data.title} 상세 열기`}
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onOpenDetail?.(id);
+          }}
+          className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold transition ${
+            data.isRoot ? "bg-white/20 text-white hover:bg-white/30" : "bg-violet-100 text-[var(--primary)] hover:bg-violet-200"
+          }`}
+        >
+          상세
+        </button>
         {data.hasChildren ? (
           <button
             type="button"

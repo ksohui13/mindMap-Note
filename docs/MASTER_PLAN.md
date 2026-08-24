@@ -486,7 +486,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 08. Node 상세 Markdown 패널·미리보기·전체화면 — ⬜ TODO
+## 08. Node 상세 Markdown 패널·미리보기·전체화면 — ✅ DONE
 
 ### Goal
 
@@ -523,6 +523,24 @@ DEFERRED TO 12 / NOT VERIFIED
 - component test: A/B node draft 격리, edit/preview, panel/overlay 전환, focus 복원
 - Playwright: 상세 열기→작성→미리보기→전체화면→종료 후 선택/zoom/viewport 유지
 - lint, typecheck, test, build 및 실제 긴 문서 입력 확인
+
+### Execution Record (2026-08-24)
+
+- Backend: 초기 Mindmap tree 응답에는 `contentMd`를 추가하지 않고, 소유권 기반 `GET/PATCH /api/nodes/:nodeId/content`로 선택 node의 상세만 조회·수정하게 했다. PATCH는 UTF-8 256KiB 상한과 revision을 검증하고 node revision 및 Mindmap `updatedAt`을 transaction에서 갱신한다.
+- Frontend: node 선택과 `[상세]` 액션으로 S04 패널을 열고 controlled textarea, GFM 미리보기, 로딩·오류·재시도, 닫기와 전체화면 진입을 제공한다. `react-markdown` 기본 정책으로 raw HTML을 렌더하지 않는다.
+- Draft: TanStack Query의 node별 content cache와 node id별 in-memory draft를 분리해 늦은 조회 응답과 A/B node 전환이 다른 초안을 덮지 않게 했다. 자동저장·재접속 draft 보호는 계획대로 09에 유지한다.
+- Fullscreen: Editor 내부 overlay에서 desktop 편집/미리보기 분할과 좁은 화면 tab을 제공한다. 종료 후 panel, selected node, React Flow viewport/zoom을 유지하고 진입 버튼으로 focus를 복원한다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(22 files/81 tests), `npm run build`, `npx playwright test --list`(4 files/6 tests).
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 content 조회·저장·빈 값·256KiB 경계·revision conflict·타 사용자 차단·Mindmap updatedAt integration test 실행
+- 실제 브라우저에서 상세 작성→GFM preview→fullscreen 왕복 후 선택·viewport·zoom·panel 유지 Playwright 실행
+- 실제 긴 Markdown 입력, 반응형 분할/tab, focus, 시각 결과와 browser console 확인
+- 사유: localhost:5432 PostgreSQL이 실행 중이지 않아 DB 기반 integration/E2E 환경을 기동할 수 없음
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 08을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성됐으며 실행 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -743,6 +761,7 @@ DEFERRED TO 12 / NOT VERIFIED
 | 05 | NOT VERIFIED | 실제 DB Editor detail/integrity integration, node·edge 선택·Pan·Zoom·Fit View Playwright, 좌표·관계 reload 및 브라우저 시각/console 확인 |
 | 06 | NOT VERIFIED | 실제 DB child/title/revision integration, root 한글 즉시 편집→다단계 child→reload Playwright, focus·IME·기본 배치·브라우저 시각/console 확인 |
 | 07 | NOT VERIFIED | 실제 DB position/collapse/revision/소유권 integration, drag·collapse·root collapse→reload 및 부모 관계 불변 Playwright, Fit View·브라우저 시각/console 확인 |
+| 08 | NOT VERIFIED | 실제 DB content/revision/소유권/256KiB integration, Markdown 작성·GFM preview·fullscreen 왕복 Playwright, viewport·focus·반응형·브라우저 시각/console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -759,17 +778,17 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 05. Editor 캔버스 기반 | ✅ DONE | 소유권 기반 Node/Edge 조회와 선택·Pan·Zoom·Fit View 구현 |
 | 06. Node 생성·제목 편집 | ✅ DONE | root 즉시 편집과 child 생성·revision 기반 제목 수정 구현 |
 | 07. 이동·접기/펼치기 | ✅ DONE | Drag End 위치 저장과 하위 tree 접기·펼치기·실패 복구 구현 |
-| 08. Markdown 상세 UI | ⬜ TODO | 패널·미리보기·전체화면 집중 편집 |
+| 08. Markdown 상세 UI | ✅ DONE | 노드별 상세 조회·격리 draft·GFM 미리보기·전체화면 집중 편집 구현 |
 | 09. 자동저장·오류 복구 | ⬜ TODO | 2초 debounce, 저장 상태, retry, draft 보호 |
 | 10. 안전한 삭제 | ⬜ TODO | Mindmap 및 일반 node subtree 확인 삭제 |
 | 11. Markdown 내보내기 | ⬜ TODO | ALL/NODE/SUBTREE UTF-8 파일 다운로드 |
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 7
+- 완료: 8
 - 진행 중: 0
 - 차단: 0
-- 남음: 5
+- 남음: 4
 
 ## Decision Log
 
@@ -807,6 +826,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-21 | 07 | 서버 좌표·접힘 상태와 local override를 분리 | 실패 시 사용자의 방금 조작을 유지하면서 명시적 재시도와 서버 상태 복원을 모두 제공하기 위함 |
 | 2026-08-21 | 07 | 전체 tree는 유지하고 O(n) visible selector로 렌더 범위만 계산 | parent 관계와 저장 좌표를 바꾸지 않으면서 중첩·root collapse를 일관되게 처리하기 위함 |
 | 2026-08-21 | 07 | 자식 node에만 인라인 chevron을 표시하고 접힌 node의 추가를 잠금 | 조작 가능성을 명확히 드러내고 보이지 않는 subtree에 의도치 않게 child가 생성되는 것을 방지하기 위함 |
+| 2026-08-24 | 08 | Node Markdown을 전체 tree와 분리된 선택 조회 API로 제공 | 긴 본문이 최대 1,000 node 초기 캔버스 응답과 렌더 성능을 악화시키지 않게 하기 위함 |
+| 2026-08-24 | 08 | Markdown 본문 상한을 UTF-8 256KiB로 결정 | 긴 PoC 문서를 허용하면서 요청 메모리와 저장 크기에 명시적인 경계를 두기 위함 |
+| 2026-08-24 | 08 | 상세 draft는 node별 in-memory 상태로 격리하고 저장 호출은 09로 이관 | node 전환 중 초안 혼합을 막되 debounce·재시도·재접속 보호 정책을 09에서 하나의 저장 상태기로 완성하기 위함 |
 
 ## Surprises & Discoveries
 

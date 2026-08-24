@@ -18,6 +18,10 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "@/features/mindmap/api/client";
 import { MindmapEdge } from "@/features/mindmap/components/mindmap-edge";
 import { MindmapNode } from "@/features/mindmap/components/mindmap-node";
+import {
+  NodeDetailFullscreen,
+  NodeDetailPanel,
+} from "@/features/mindmap/components/node-detail";
 import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import {
   useCreateNode,
@@ -70,6 +74,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
   );
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  const [detailFullscreenOpen, setDetailFullscreenOpen] = useState(false);
+  const [contentDrafts, setContentDrafts] = useState<Readonly<Record<string, string>>>({});
+  const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
   );
@@ -446,6 +454,27 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     clearMutationError(nodeId);
   }, [clearMutationError, mutationErrors]);
 
+  const openNodeDetail = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setDetailPanelOpen(true);
+  }, []);
+
+  const closeNodeDetail = useCallback(() => {
+    setDetailFullscreenOpen(false);
+    setDetailPanelOpen(false);
+  }, []);
+
+  const changeContentDraft = useCallback((nodeId: string, value: string) => {
+    setContentDrafts((current) => current[nodeId] === value
+      ? current
+      : { ...current, [nodeId]: value });
+  }, []);
+
+  const closeFullscreen = useCallback(() => {
+    setDetailFullscreenOpen(false);
+    queueMicrotask(() => fullscreenButtonRef.current?.focus());
+  }, []);
+
   if (detail.isPending && !detail.data) return <EditorLoadingState />;
   if (!detail.data) {
     return <EditorQueryError onRetry={() => void detail.refetch()} />;
@@ -457,7 +486,14 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       <MindmapCanvas
         detail={{ ...detail.data, nodes: visibleNodes }}
         selectedNodeId={selectedNodeId}
-        onSelectNode={setSelectedNodeId}
+        onSelectNode={(nodeId) => {
+          if (nodeId) openNodeDetail(nodeId);
+          else {
+            setSelectedNodeId(null);
+            closeNodeDetail();
+          }
+        }}
+        onOpenDetail={openNodeDetail}
         editingNodeId={editingNodeId}
         editDraft={editDraft}
         editError={editError}
@@ -481,6 +517,26 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         onNodesChange={changeNodePositions}
         onNodeDragStop={(nodeId, position) => void persistPosition(nodeId, position)}
       />
+      {detailPanelOpen && selectedNodeId ? (
+        <NodeDetailPanel
+          nodeId={selectedNodeId}
+          title={detail.data.nodes.find((node) => node.id === selectedNodeId)?.title ?? "노드 상세"}
+          draft={contentDrafts[selectedNodeId]}
+          onChangeDraft={changeContentDraft}
+          onClose={closeNodeDetail}
+          onOpenFullscreen={() => setDetailFullscreenOpen(true)}
+          fullscreenButtonRef={fullscreenButtonRef}
+        />
+      ) : null}
+      {detailFullscreenOpen && selectedNodeId ? (
+        <NodeDetailFullscreen
+          nodeId={selectedNodeId}
+          title={detail.data.nodes.find((node) => node.id === selectedNodeId)?.title ?? "노드 상세"}
+          draft={contentDrafts[selectedNodeId]}
+          onChangeDraft={changeContentDraft}
+          onClose={closeFullscreen}
+        />
+      ) : null}
     </main>
   );
 }
@@ -505,6 +561,7 @@ function MindmapCanvas({
   detail,
   selectedNodeId,
   onSelectNode,
+  onOpenDetail,
   editingNodeId,
   editDraft,
   editError,
@@ -528,6 +585,7 @@ function MindmapCanvas({
   detail: MindmapDetailResponse;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
+  onOpenDetail: (nodeId: string) => void;
   editingNodeId: string | null;
   editDraft: string;
   editError: string | null;
@@ -560,6 +618,7 @@ function MindmapCanvas({
       nodesWithChildren: parentNodeIds,
       mutationErrors,
       onAddChild,
+      onOpenDetail,
       onCancelEdit,
       onChangeDraft,
       onCommitEdit,
@@ -582,6 +641,7 @@ function MindmapCanvas({
       editError,
       editingNodeId,
       onAddChild,
+      onOpenDetail,
       onCancelEdit,
       onChangeDraft,
       onCommitEdit,

@@ -138,4 +138,37 @@ test.describe("mindmap editor canvas", () => {
       await client.$disconnect();
     }
   });
+
+  test("edits and previews isolated Markdown without losing the canvas viewport after fullscreen", async ({ page }) => {
+    const email = `markdown-${Date.now()}@example.test`;
+    await page.goto("/login");
+    await page.getByRole("button", { name: "회원가입" }).click();
+    await page.getByLabel("이메일").fill(email);
+    await page.getByLabel("비밀번호", { exact: true }).fill("password123");
+    await page.getByLabel("비밀번호 확인").fill("password123");
+    await page.getByRole("button", { name: "계정 만들기" }).click();
+    await page.getByRole("button", { name: "+ 새 마인드맵" }).click();
+
+    await page.getByLabel("노드 제목").press("Escape");
+    const viewport = page.locator(".react-flow__viewport");
+    await page.getByRole("button", { name: "확대" }).click();
+    await page.waitForTimeout(250);
+    const viewportBefore = await viewport.getAttribute("style");
+
+    await page.getByLabel("시작 상세 열기").click();
+    const markdown = page.getByLabel("Markdown 내용");
+    await markdown.fill("# 집중 편집\n\n- 첫 항목");
+    await page.getByRole("tab", { name: "미리보기" }).click();
+    await expect(page.getByRole("heading", { name: "집중 편집" })).toBeVisible();
+
+    const fullscreenButton = page.getByLabel("상세 전체화면 열기");
+    await fullscreenButton.click();
+    await expect(page.getByRole("dialog", { name: "시작 상세 전체화면" })).toBeVisible();
+    await expect(page.getByTestId("root-node")).toHaveClass(/ring-4/);
+    await page.getByRole("button", { name: "전체화면 종료" }).click();
+
+    await expect(fullscreenButton).toBeFocused();
+    await expect(page.getByLabel("노드 상세 패널")).toBeVisible();
+    await expect(viewport).toHaveAttribute("style", viewportBefore ?? "");
+  });
 });
