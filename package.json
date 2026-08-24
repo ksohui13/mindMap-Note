@@ -15,12 +15,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:production": "npm run build && playwright test --config playwright.production.config.ts",
     "test:integration": "tsx tests/integration/setup-test-database.ts && vitest run --config vitest.integration.config.ts",
+    "test:acceptance": "npm run db:acceptance:setup && npm run test:integration && npm run perf:seed && npm run perf:backend && npm run test:e2e:production",
+    "db:acceptance:setup": "tsx scripts/acceptance/setup-database.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "perf:seed": "tsx scripts/performance/seed.ts",
+    "perf:backend": "tsx scripts/performance/benchmark-backend.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",

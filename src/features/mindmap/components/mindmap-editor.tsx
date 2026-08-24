@@ -919,6 +919,7 @@ function MindmapCanvas({
         maxZoom={2}
         nodesDraggable
         nodesConnectable={false}
+        onlyRenderVisibleElements={process.env.NODE_ENV !== "test"}
         elementsSelectable
         edgesFocusable={false}
         deleteKeyCode={null}

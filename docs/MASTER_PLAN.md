@@ -3,7 +3,7 @@
 > 문서 버전: 1.1  
 > 작성일: 2026-08-18  
 > 최종 수정일: 2026-08-24
-> 현재 저장소 상태: 11단계 범위별 Markdown 내보내기까지 구현 완료, PostgreSQL 기반 통합 인수 검증은 12단계에 누적
+> 현재 저장소 상태: 12단계 acceptance·성능 계측 기반 구현 완료, Remote PostgreSQL 실측·최종 인수 대기
 > 목표: 개인용 마인드맵 작성, 노드별 Markdown 기록, 안정적 저장·복원, 범위별 Markdown 내보내기가 실제로 동작하는 First Usable Version 완성
 
 ## 운영 규칙
@@ -751,7 +751,7 @@ NOT VERIFIED — 12단계로 이관
 
 ---
 
-## 12. 1,000 Node 성능·보안 회귀·최종 E2E 인수 검증 — ⬜ TODO
+## 12. 1,000 Node 성능·보안 회귀·최종 E2E 인수 검증 — 🟡 IN_PROGRESS
 
 ### Goal
 
@@ -796,6 +796,26 @@ NOT VERIFIED — 12단계로 이관
 - `npm run build`
 - production mode 기동 후 Final Acceptance Criteria 전체 수동/자동 검증
 - 1,000 node 성능 측정 결과 기록. 목표 미달이면 `NOT VERIFIED`가 아니라 원인과 수치를 기록하고 단계 상태를 `IN_PROGRESS` 또는 실제 진행 불가 시 `BLOCKED`로 유지
+
+### 구현 결과
+
+- `mindmap_acceptance`와 `mindmap_test` 전용 DB 이름, 서로 다른 URL, remote reset 확인값을 검증하는 공통 안전장치를 구현했다.
+- acceptance schema reset → migration deploy/status → seed 2회 → integration → fixture/backend benchmark → production E2E 순서를 `npm run test:acceptance`로 고정했다.
+- 4진 balanced tree의 100-node, 1,000-node expanded, 1,000-node depth-2 collapsed fixture를 결정적으로 생성한다. 각 Node는 최대 1KiB Markdown과 고정 좌표를 가진다.
+- 상세 조회·ALL export·autosave는 10회, 1,000-node subtree 삭제는 fixture 준비 시간을 제외하고 3회 측정해 시간·query 수·payload·heap 결과를 JSON으로 남긴다.
+- production Playwright에 expanded/collapsed 각각 warm-up 1회+측정 5회, 2초 first-visible/5초 usable hard assertion과 1,000-node autosave·ALL export를 추가했다.
+- 전 API의 타 사용자 404, invalid UUID 400, cross-origin 403, 비로그인 401 회귀와 network autosave 실패·retry·pagehide journal 복구 E2E를 추가했다.
+- React Flow production 렌더에는 `onlyRenderVisibleElements`를 적용했다. DOM geometry를 제공하지 못하는 JSDOM test에서만 비활성화해 기존 component 검증 의미를 유지한다.
+- Remote PostgreSQL 실행법, reset 안전장치, acceptance/성능 명령과 알려진 제한을 README에 반영했다.
+
+```text
+IN_PROGRESS — Remote PostgreSQL 입력 대기
+
+- PASS: lint, typecheck, 35 unit/component files·131 tests, production build
+- PASS: production Playwright 7 files·9 tests 수집, 잘못된 acceptance DB 이름을 실제 연결 전에 차단
+- NOT VERIFIED: migration/status, seed 2회, integration 전체, backend 실측, production E2E 9개, 1,000-node 2초/5초
+- 사유: 현재 DATABASE_URL은 localhost/mindmap이고 TEST_DATABASE_URL은 localhost/mindmap_test이며 localhost:5432가 ECONNREFUSED이다. 선택한 Remote 전용 DB URL이 아직 실행 환경에 주입되지 않았다.
+```
 
 ### Definition of Done
 
@@ -844,13 +864,13 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 09. 자동저장·오류 복구 | ✅ DONE | node별 직렬 저장·2초 debounce·실제 저장 상태·local draft 복구 구현 |
 | 10. 안전한 삭제 | ✅ DONE | 최신 영향 수 확인·범위 고정 transaction·draft/cache 정리를 포함한 Mindmap/Node 영구 삭제 구현 |
 | 11. Markdown 내보내기 | ✅ DONE | snapshot 기반 ALL/NODE/SUBTREE Markdown 생성·저장 선행·recovery 차단·UTF-8 다운로드 구현 |
-| 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
+| 12. 성능·보안·최종 인수 | 🟡 IN_PROGRESS | 안전한 remote acceptance·1,000-node 계측·보안/E2E 코드 완료, 실제 Remote DB 인수 대기 |
 
 - 총 단계: 12
 - 완료: 11
-- 진행 중: 0
+- 진행 중: 1
 - 차단: 0
-- 남음: 1
+- 남음: 0
 
 ## Decision Log
 
@@ -900,6 +920,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-24 | 11 | export 문서는 repeatable-read 서버 snapshot만 사용 | client draft를 문서에 임의 병합하지 않고 저장 성공이 확인된 하나의 일관된 tree/content 시점을 제공하기 위함 |
 | 2026-08-24 | 11 | Editor export 전에 대상 mutation queue와 최신 Markdown 저장을 완료 | 사용자가 보는 dirty 내용이 누락된 서버본 파일을 성공처럼 다운로드하지 않기 위함 |
 | 2026-08-24 | 11 | 다른 recovery journal은 export를 차단하고 동일 journal만 조용히 제거 | 자동 적용·무시로 미저장 내용을 잃는 위험 없이 서버와 동일한 잔여 record만 안전하게 정리하기 위함 |
+| 2026-08-24 | 12 | Acceptance와 integration을 이름이 고정된 remote 전용 DB 두 개로 분리 | 파괴적 schema 초기화가 개발·운영 DB에 닿지 않게 하고 E2E/성능 데이터와 매 test reset을 격리하기 위함 |
+| 2026-08-24 | 12 | expanded와 collapsed 1,000-node fixture 모두 5회 전부 2초/5초 통과 요구 | 평균값이 느린 실행을 숨기지 않게 하고 최악 렌더와 일반적인 접힘 사용 조건을 함께 보장하기 위함 |
+| 2026-08-24 | 12 | 실제 인수 결과 전에는 단계와 backlog를 완료 처리하지 않음 | harness 구현이나 test 수집 성공을 PostgreSQL transaction·영속성·browser 성능 성공으로 오인하지 않기 위함 |
 
 ## Surprises & Discoveries
 

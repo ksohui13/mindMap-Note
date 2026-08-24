@@ -1,9 +1,19 @@
 import { spawnSync } from "node:child_process";
 
-import { config as loadEnvironment } from "dotenv";
 import pg from "pg";
 
-loadEnvironment({ path: ".env.test", quiet: true });
+import {
+  assertDistinctDatabases,
+  describeDatabase,
+  resetPublicSchema,
+  validateDedicatedDatabase,
+} from "../../scripts/acceptance/database-safety";
+import "../../scripts/acceptance/load-environment";
+
+if (!process.env.TEST_DATABASE_URL) {
+  const { config: loadEnvironment } = await import("dotenv");
+  loadEnvironment({ path: ".env.test", quiet: true });
+}
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -11,40 +21,36 @@ if (!testDatabaseUrl) {
   throw new Error("TEST_DATABASE_URL is required.");
 }
 
-const parsedUrl = new URL(testDatabaseUrl);
-const databaseName = decodeURIComponent(parsedUrl.pathname.slice(1));
-const allowedHosts = new Set(["127.0.0.1", "localhost"]);
+const database = validateDedicatedDatabase({
+  url: testDatabaseUrl,
+  expectedDatabase: "mindmap_test",
+  confirmation: process.env.TEST_DATABASE_RESET_CONFIRM,
+  allowLocalWithoutConfirmation: true,
+});
+if (process.env.DATABASE_URL) {
+  assertDistinctDatabases(process.env.DATABASE_URL, database.url);
+}
 
-if (!allowedHosts.has(parsedUrl.hostname) || databaseName !== "mindmap_test") {
-  throw new Error(
-    "Refusing to reset an unsafe integration database. Use localhost/mindmap_test.",
+if (database.isLocal) {
+  const adminUrl = new URL(database.url);
+  adminUrl.pathname = "/postgres";
+  adminUrl.search = "";
+
+  const adminClient = new pg.Client({ connectionString: adminUrl.toString() });
+  await adminClient.connect();
+  const existing = await adminClient.query<{ exists: boolean }>(
+    "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS exists",
+    [database.databaseName],
   );
+
+  if (!existing.rows[0]?.exists) {
+    await adminClient.query('CREATE DATABASE "mindmap_test"');
+  }
+  await adminClient.end();
 }
 
-const adminUrl = new URL(parsedUrl);
-adminUrl.pathname = "/postgres";
-adminUrl.search = "";
-
-const adminClient = new pg.Client({ connectionString: adminUrl.toString() });
-await adminClient.connect();
-const existing = await adminClient.query<{ exists: boolean }>(
-  "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS exists",
-  [databaseName],
-);
-
-if (!existing.rows[0]?.exists) {
-  await adminClient.query('CREATE DATABASE "mindmap_test"');
-}
-
-await adminClient.end();
-
-const testClient = new pg.Client({ connectionString: testDatabaseUrl });
-await testClient.connect();
-await testClient.query('DROP SCHEMA IF EXISTS "public" CASCADE');
-await testClient.query('CREATE SCHEMA "public"');
-await testClient.query('GRANT ALL ON SCHEMA "public" TO "mindmap"');
-await testClient.query('GRANT ALL ON SCHEMA "public" TO public');
-await testClient.end();
+console.log(`[integration] Resetting dedicated database ${describeDatabase(database)}.`);
+await resetPublicSchema(testDatabaseUrl);
 
 const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
 const migration = spawnSync(npxCommand, ["prisma", "migrate", "deploy"], {

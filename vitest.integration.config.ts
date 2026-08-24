@@ -2,6 +2,7 @@ import { config as loadEnvironment } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+loadEnvironment({ path: ".env.acceptance.local", quiet: true });
 loadEnvironment({ path: ".env.test", quiet: true });
 
 export default defineConfig({

@@ -3,6 +3,7 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
+artifacts/
 src/generated/prisma/
 .env
 .env.local
