@@ -8,6 +8,7 @@ import {
   findMindmapDetailForUser,
   findMindmapForUser,
   listMindmapsForUser,
+  lockMindmapForUser,
 } from "./mindmap.repository";
 import { validateMindmapTree } from "./mindmap-tree";
 import { normalizeTitle } from "./normalization";
@@ -142,4 +143,50 @@ export async function getMindmapDetailForUser(
   }
   const rootNodeId = validateMindmapTree(detail.nodes);
   return { ...detail, rootNodeId };
+}
+
+export async function deleteMindmapForUser(
+  mindmapId: string,
+  userId: string,
+  expectedNodeCount: number,
+  client: PrismaClient = prisma,
+): Promise<{ deletedMindmapId: string; deletedNodeCount: number }> {
+  if (!Number.isInteger(expectedNodeCount) || expectedNodeCount < 0) {
+    throw new DomainError("INVALID_INPUT", "Expected node count must be a non-negative integer.");
+  }
+
+  try {
+    return await client.$transaction(async (transaction) => {
+      if (!(await lockMindmapForUser(mindmapId, userId, transaction))) {
+        throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+      }
+      const mindmap = await transaction.mindmap.findFirst({
+        where: { id: mindmapId, userId },
+        include: { _count: { select: { nodes: true } } },
+      });
+      if (!mindmap) throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+      if (mindmap._count.nodes !== expectedNodeCount) {
+        throw new DomainError(
+          "CONFLICT",
+          "Mindmap contents changed. Review the deletion impact and try again.",
+        );
+      }
+
+      await transaction.mindmap.delete({ where: { id: mindmap.id } });
+      return {
+        deletedMindmapId: mindmap.id,
+        deletedNodeCount: mindmap._count.nodes,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    if (isPrismaError(error, "P2034")) {
+      throw new DomainError(
+        "CONFLICT",
+        "Mindmap contents changed. Review the deletion impact and try again.",
+        error,
+      );
+    }
+    return mapPrismaError(error);
+  }
 }

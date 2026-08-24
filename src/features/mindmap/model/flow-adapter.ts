@@ -24,6 +24,7 @@ export type MindmapNodeData = {
   onCommitEdit?: () => void;
   onStartEdit?: (nodeId: string) => void;
   onToggleCollapse?: (nodeId: string) => void;
+  onDelete?: (nodeId: string) => void;
   onRetryMutation?: (nodeId: string) => void;
   onRevertMutation?: (nodeId: string) => void;
 };
@@ -51,6 +52,7 @@ export function toMindmapFlow(
     onCommitEdit: () => void;
     onStartEdit: (nodeId: string) => void;
     onToggleCollapse: (nodeId: string) => void;
+    onDelete: (nodeId: string) => void;
     onRetryMutation: (nodeId: string) => void;
     onRevertMutation: (nodeId: string) => void;
   }>,
@@ -103,6 +105,7 @@ export function toMindmapFlow(
         onCommitEdit: interaction?.onCommitEdit,
         onStartEdit: interaction?.onStartEdit,
         onToggleCollapse: interaction?.onToggleCollapse,
+        onDelete: interaction?.onDelete,
         onRetryMutation: interaction?.onRetryMutation,
         onRevertMutation: interaction?.onRevertMutation,
       },

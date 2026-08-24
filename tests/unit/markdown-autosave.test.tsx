@@ -168,6 +168,56 @@ describe("markdown autosave", () => {
     });
     expect(localStorage.getItem(draftJournalKey("map-a", "node-a"))).toBeNull();
   });
+
+  it("pauses timers during deletion, resumes after failure, and discards only after success", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const input = JSON.parse(String(init?.body)) as { contentMd: string; revision: number };
+      return new Response(JSON.stringify({
+        node: { ...serverContent.node, contentMd: input.contentMd, revision: input.revision + 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderAutosaveHook();
+
+    act(() => result.current.autosave.changeDraft("node-a", "protected draft"));
+    act(() => result.current.autosave.pauseNodes(["node-a"]));
+    await act(() => vi.advanceTimersByTimeAsync(3_000));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.autosave.drafts["node-a"]).toBe("protected draft");
+    expect(localStorage.getItem(draftJournalKey("map-a", "node-a"))).not.toBeNull();
+
+    act(() => result.current.autosave.resumeNodes(["node-a"]));
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    act(() => result.current.autosave.changeDraft("node-a", "delete me"));
+    act(() => result.current.autosave.pauseNodes(["node-a"]));
+    act(() => result.current.autosave.discardNodes(["node-a"]));
+    expect(result.current.autosave.drafts["node-a"]).toBeUndefined();
+    expect(localStorage.getItem(draftJournalKey("map-a", "node-a"))).toBeNull();
+    expect(result.current.coordinator.getRecord("node-a", "content").phase).toBe("idle");
+  });
+
+  it("does not recreate content cache when a deleted node save resolves late", async () => {
+    const response = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn(() => response.promise));
+    const { result, client } = renderAutosaveHook();
+
+    act(() => result.current.autosave.changeDraft("node-a", "in flight"));
+    act(() => { void result.current.autosave.flush("node-a"); });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    act(() => result.current.autosave.discardNodes(["node-a"]));
+
+    await act(async () => {
+      response.resolve(new Response(JSON.stringify({
+        node: { ...serverContent.node, contentMd: "in flight", revision: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.coordinator.getRecord("node-a", "content").phase).toBe("idle");
+    expect(client.getQueryData(nodeContentQueryKey("node-a"))).toBeUndefined();
+  });
 });
 
 function renderAutosaveHook() {
@@ -178,7 +228,7 @@ function renderAutosaveHook() {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return renderHook(() => {
+  const rendered = renderHook(() => {
     const coordinator = useNodeMutationCoordinator([{ id: "node-a", revision: 0 }]);
     const autosave = useMarkdownAutosave({
       mindmapId: "map-a",
@@ -188,6 +238,7 @@ function renderAutosaveHook() {
     });
     return { coordinator, autosave };
   }, { wrapper });
+  return { ...rendered, client };
 }
 
 function deferred<T>() {

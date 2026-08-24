@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import {
+  deleteMindmapInputSchema,
+  type DeleteMindmapResponse,
   mindmapIdSchema,
   type MindmapDetailResponse,
   type UpdateMindmapResponse,
@@ -9,7 +11,11 @@ import {
 } from "@/features/mindmap/api/contracts";
 import { requireApiUser } from "@/server/auth/request";
 import { toMindmapDetailDTO, toMindmapSummaryDTO } from "@/server/domain/mindmap.dto";
-import { getMindmapDetailForUser, updateMindmapTitle } from "@/server/domain/mindmap.service";
+import {
+  deleteMindmapForUser,
+  getMindmapDetailForUser,
+  updateMindmapTitle,
+} from "@/server/domain/mindmap.service";
 import {
   assertSameOrigin,
   errorResponse,
@@ -53,6 +59,27 @@ export async function PATCH(
     const response: UpdateMindmapResponse = {
       mindmap: toMindmapSummaryDTO(mindmap),
     };
+    return NextResponse.json(response);
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function DELETE(request: NextRequest, context: MindmapRouteContext) {
+  try {
+    assertSameOrigin(request);
+    const user = await requireApiUser(request);
+    const id = mindmapIdSchema.safeParse((await context.params).mindmapId);
+    if (!id.success) return validationErrorResponse(id.error);
+    const body = deleteMindmapInputSchema.safeParse(await readJsonBody(request));
+    if (!body.success) return validationErrorResponse(body.error);
+
+    const result = await deleteMindmapForUser(
+      id.data,
+      user.id,
+      body.data.expectedNodeCount,
+    );
+    const response: DeleteMindmapResponse = result;
     return NextResponse.json(response);
   } catch (error) {
     return errorResponse(error);

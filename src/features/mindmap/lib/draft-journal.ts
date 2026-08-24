@@ -91,6 +91,24 @@ export function removeDraftJournal(
   }
 }
 
+export function removeMindmapDraftJournals(
+  storage: Storage | null,
+  mindmapId: string,
+): void {
+  if (!storage) return;
+  const prefix = `${DRAFT_KEY_PREFIX}${mindmapId}:`;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) tryRemove(storage, key);
+  } catch {
+    // Server deletion must not fail because browser storage is unavailable.
+  }
+}
+
 function tryRemove(storage: StorageLike, key: string): void {
   try {
     storage.removeItem(key);

@@ -13,7 +13,7 @@ import {
   type DraftJournalEntry,
 } from "@/features/mindmap/lib/draft-journal";
 import { useUpdateNodeContent } from "@/features/mindmap/hooks/use-node-content";
-import { nodeContentQueryKey } from "@/features/mindmap/hooks/use-node-content";
+import { nodeContentQueryKey, nodeDeletedQueryKey } from "@/features/mindmap/hooks/use-node-content";
 import { mindmapDetailQueryKey } from "@/features/mindmap/hooks/use-mindmap-detail";
 import type { useNodeMutationCoordinator } from "@/features/mindmap/hooks/use-node-mutation-coordinator";
 
@@ -43,6 +43,7 @@ export function useMarkdownAutosave({
   const lastEditedAt = useRef(new Map<string, number>());
   const inFlight = useRef(new Set<string>());
   const pendingFlush = useRef(new Set<string>());
+  const pausedNodes = useRef(new Set<string>());
   const flushRef = useRef<(nodeId: string, options?: FlushOptions) => Promise<void>>(
     () => Promise.resolve(),
   );
@@ -55,6 +56,7 @@ export function useMarkdownAutosave({
 
   const schedule = useCallback((nodeId: string, delay = AUTOSAVE_DELAY_MS) => {
     clearTimer(nodeId);
+    if (pausedNodes.current.has(nodeId)) return;
     timers.current.set(nodeId, setTimeout(() => {
       timers.current.delete(nodeId);
       void flushRef.current(nodeId);
@@ -79,6 +81,7 @@ export function useMarkdownAutosave({
 
   const flush = useCallback(async (nodeId: string, options: FlushOptions = {}) => {
     clearTimer(nodeId);
+    if (pausedNodes.current.has(nodeId)) return;
     if (recoveriesRef.current[nodeId]) return;
     const draft = draftsRef.current[nodeId];
     const server = queryClient.getQueryData<NodeContentResponse>(nodeContentQueryKey(nodeId));
@@ -217,6 +220,43 @@ export function useMarkdownAutosave({
     coordinator.markIdle(nodeId, "content");
   }, [coordinator, mindmapId]);
 
+  const pauseNodes = useCallback((nodeIds: readonly string[]) => {
+    for (const nodeId of nodeIds) {
+      pausedNodes.current.add(nodeId);
+      clearTimer(nodeId);
+      pendingFlush.current.delete(nodeId);
+    }
+  }, [clearTimer]);
+
+  const resumeNodes = useCallback((nodeIds: readonly string[]) => {
+    for (const nodeId of nodeIds) {
+      pausedNodes.current.delete(nodeId);
+      if (
+        draftsRef.current[nodeId] !== undefined &&
+        recoveriesRef.current[nodeId] === undefined
+      ) schedule(nodeId);
+    }
+  }, [schedule]);
+
+  const discardNodes = useCallback((nodeIds: readonly string[]) => {
+    const removed = new Set(nodeIds);
+    for (const nodeId of removed) {
+      pausedNodes.current.delete(nodeId);
+      pendingFlush.current.delete(nodeId);
+      lastEditedAt.current.delete(nodeId);
+      clearTimer(nodeId);
+      removeDraftJournal(getBrowserStorage(), mindmapId, nodeId);
+      queryClient.setQueryData(nodeDeletedQueryKey(nodeId), true);
+      void queryClient.cancelQueries({ queryKey: nodeContentQueryKey(nodeId), exact: true });
+      queryClient.removeQueries({ queryKey: nodeContentQueryKey(nodeId), exact: true });
+    }
+    setDrafts((current) => omitKeys(current, removed));
+    draftsRef.current = omitKeys(draftsRef.current, removed);
+    setRecoveries((current) => omitKeys(current, removed));
+    recoveriesRef.current = omitKeys(recoveriesRef.current, removed);
+    coordinator.forgetNodes(nodeIds);
+  }, [clearTimer, coordinator, mindmapId, queryClient]);
+
   return {
     drafts,
     changeDraft,
@@ -225,8 +265,19 @@ export function useMarkdownAutosave({
     recovery: selectedNodeId ? recoveries[selectedNodeId] : undefined,
     applyRecovery,
     discardRecovery,
+    pauseNodes,
+    resumeNodes,
+    discardNodes,
     storageWarning,
   };
+}
+
+function omitKeys<T>(
+  record: Readonly<Record<string, T>>,
+  keys: ReadonlySet<string>,
+): Readonly<Record<string, T>> {
+  if (![...keys].some((key) => key in record)) return record;
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.has(key)));
 }
 
 type FlushOptions = Readonly<{ keepalive?: boolean }>;

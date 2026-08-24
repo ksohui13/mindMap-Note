@@ -125,6 +125,28 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
         >
           {data.isCreatingChild ? "…" : "+"}
         </button>
+        {!data.isRoot ? (
+          <details
+            className="relative"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <summary
+              aria-label={`${data.title} 메뉴`}
+              className="grid size-7 cursor-pointer list-none place-items-center rounded-full bg-violet-100 text-sm font-black text-[var(--primary)] transition hover:bg-violet-200"
+            >
+              ⋯
+            </summary>
+            <div className="absolute right-0 z-20 mt-1 w-24 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-lg">
+              <button
+                type="button"
+                onClick={() => data.onDelete?.(id)}
+                className="w-full rounded-md px-3 py-2 text-xs font-bold text-[var(--danger)] hover:bg-red-50"
+              >
+                삭제
+              </button>
+            </div>
+          </details>
+        ) : null}
       </div>
       {data.childCreateError ? (
         <div role="alert" className={`mt-1 text-[10px] font-bold ${data.isRoot ? "text-red-100" : "text-[var(--danger)]"}`}>

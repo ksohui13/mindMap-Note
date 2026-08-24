@@ -2,8 +2,8 @@
 
 > 문서 버전: 1.1  
 > 작성일: 2026-08-18  
-> 최종 수정일: 2026-08-19  
-> 현재 저장소 상태: Next.js 실행 기반과 Prisma 영속 계층 구현 완료, 제품 기능 구현 진행 전  
+> 최종 수정일: 2026-08-24
+> 현재 저장소 상태: 10단계 안전 삭제까지 구현 완료, PostgreSQL 기반 통합 인수 검증은 12단계에 누적
 > 목표: 개인용 마인드맵 작성, 노드별 Markdown 기록, 안정적 저장·복원, 범위별 Markdown 내보내기가 실제로 동작하는 First Usable Version 완성
 
 ## 운영 규칙
@@ -618,7 +618,7 @@ DEFERRED TO 12 / NOT VERIFIED
 
 ---
 
-## 10. Mindmap·Node 삭제 확인과 안전한 Subtree 삭제 — ⬜ TODO
+## 10. Mindmap·Node 삭제 확인과 안전한 Subtree 삭제 — ✅ DONE
 
 ### Goal
 
@@ -636,6 +636,7 @@ DEFERRED TO 12 / NOT VERIFIED
 ### Backend
 
 - API:
+  - `GET /api/nodes/:nodeId/deletion-impact`
   - `DELETE /api/mindmaps/:mindmapId`
   - `DELETE /api/nodes/:nodeId`
 - node 삭제는 recursive CTE 또는 검증된 subtree 계산을 사용해 한 transaction에서 descendant와 대상을 삭제한다.
@@ -656,6 +657,23 @@ DEFERRED TO 12 / NOT VERIFIED
 - modal focus trap/Esc/취소/중복 제출 component test
 - Playwright: child subtree 삭제와 reload, root menu 부재, Mindmap 삭제와 Dashboard 갱신
 - lint, typecheck, test, build 및 브라우저 확인
+
+### Execution Record (2026-08-24)
+
+- 구현 완료: 최신 subtree 영향 조회, expected count 기반 Node/Mindmap 영구 삭제, 소유권 404와 root 409, Mindmap 행 잠금과 serializable 삭제 transaction, 공통 Radix AlertDialog 확인 modal.
+- 삭제 성공 후에만 Dashboard/detail/content cache, 선택·panel·fullscreen, local override, autosave timer/state, in-memory draft와 Mindmap/node별 localStorage journal을 정리한다.
+- 삭제 실패 시 draft/journal을 유지하고 autosave를 다시 예약하며, 409는 영향/목록을 재조회해 변경된 범위를 다시 확인하게 한다.
+- 삭제 tombstone과 coordinator subtree 폐기로 이미 시작된 Markdown 저장 응답이 삭제 node의 cache나 저장 상태를 되살리지 않게 했다.
+- 검증 성공: `npm run lint`, `npm run typecheck`, `npm run test`(28 files/114 tests), `npm run build`, `npx playwright test --list`(4 files/6 tests), Playwright line 실행(1 passed/5 DB-dependent skipped).
+
+```text
+DEFERRED TO 12 / NOT VERIFIED
+- 실제 PostgreSQL에서 leaf/깊은 subtree 삭제, sibling 보존, stale count rollback, Mindmap cascade·sequence 재사용, 동시 child 생성과 삭제 범위 고정 integration test 실행
+- 실제 Chromium에서 descendant 영향 확인, root menu 부재, subtree 삭제→reload, Mindmap 삭제→Dashboard 갱신·sequence 재사용 E2E 실행
+- 사유: npm run test:integration 실행 시 PostgreSQL localhost:5432 IPv4/IPv6 연결 거부
+```
+
+- 기능 우선 실행 전략의 완료 기준을 충족하여 10을 `✅ DONE`으로 변경했다. integration/E2E test code는 작성했으며 실제 DB 검증 책임은 Infrastructure Validation Backlog에 유지한다.
 
 ### Definition of Done
 
@@ -782,6 +800,7 @@ DEFERRED TO 12 / NOT VERIFIED
 | 07 | NOT VERIFIED | 실제 DB position/collapse/revision/소유권 integration, drag·collapse·root collapse→reload 및 부모 관계 불변 Playwright, Fit View·브라우저 시각/console 확인 |
 | 08 | NOT VERIFIED | 실제 DB content/revision/소유권/256KiB integration, Markdown 작성·GFM preview·fullscreen 왕복 Playwright, viewport·focus·반응형·브라우저 시각/console 확인 |
 | 09 | NOT VERIFIED | 실제 DB 공유 node revision/409 currentRevision/updatedAt integration, 2초 autosave·A/B 전환·flush·실패 재시도·pagehide journal 복구·reload 영속성 Playwright, 브라우저 Network/console 확인 |
+| 10 | NOT VERIFIED | 실제 DB subtree impact/삭제·root/소유권/stale count rollback·Mindmap cascade/sequence 재사용·동시 생성 잠금 integration, Node/Mindmap 안전 삭제·reload Playwright, modal focus/브라우저 console 확인 |
 
 Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 검증에는 PostgreSQL 17 호환 DB가 필요하지만 03~11 기능 구현의 선행조건으로 사용하지 않는다.
 
@@ -800,15 +819,15 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 07. 이동·접기/펼치기 | ✅ DONE | Drag End 위치 저장과 하위 tree 접기·펼치기·실패 복구 구현 |
 | 08. Markdown 상세 UI | ✅ DONE | 노드별 상세 조회·격리 draft·GFM 미리보기·전체화면 집중 편집 구현 |
 | 09. 자동저장·오류 복구 | ✅ DONE | node별 직렬 저장·2초 debounce·실제 저장 상태·local draft 복구 구현 |
-| 10. 안전한 삭제 | ⬜ TODO | Mindmap 및 일반 node subtree 확인 삭제 |
+| 10. 안전한 삭제 | ✅ DONE | 최신 영향 수 확인·범위 고정 transaction·draft/cache 정리를 포함한 Mindmap/Node 영구 삭제 구현 |
 | 11. Markdown 내보내기 | ⬜ TODO | ALL/NODE/SUBTREE UTF-8 파일 다운로드 |
 | 12. 성능·보안·최종 인수 | ⬜ TODO | 1,000 node와 전체 E2E 검증·최적화 |
 
 - 총 단계: 12
-- 완료: 9
+- 완료: 10
 - 진행 중: 0
 - 차단: 0
-- 남음: 3
+- 남음: 2
 
 ## Decision Log
 
@@ -852,6 +871,9 @@ Docker Desktop/WSL 설치 여부는 배포 방식 선택과 별개다. 최종 �
 | 2026-08-24 | 09 | 같은 node의 모든 mutation을 하나의 coordinator에서 직렬화 | title·position·collapse·content가 revision 하나를 공유하므로 필드별 독립 mutation이 서로 충돌하거나 오래된 응답으로 상태를 되돌리는 것을 막기 위함 |
 | 2026-08-24 | 09 | Markdown journal은 서버 저장 확인·동일 내용 확인·사용자 폐기 때만 삭제 | tab 종료와 keepalive 실패 여부를 신뢰할 수 없는 상황에서도 미저장 사용자 입력을 임의로 잃지 않기 위함 |
 | 2026-08-24 | 09 | 409는 자동 덮어쓰기하지 않고 최신 revision 조회 후 명시적 재시도 | 서버의 최신 변경을 무단으로 덮지 않으면서 로컬 draft를 보존하고 사용자가 저장 재개 시점을 통제하게 하기 위함 |
+| 2026-08-24 | 10 | 삭제 영향 수를 expected count로 다시 보내 transaction 안에서 재검증 | modal을 연 뒤 subtree나 Mindmap node 수가 바뀌었을 때 사용자가 확인하지 않은 범위까지 영구 삭제되는 것을 막기 위함 |
+| 2026-08-24 | 10 | Node 생성과 Node/Mindmap 삭제가 같은 Mindmap 행 잠금을 공유 | 생성 쪽 격리 수준과 무관하게 삭제 범위 계산 중 동시 child 생성이 끼어드는 경쟁 조건을 명시적으로 직렬화하기 위함 |
+| 2026-08-24 | 10 | 삭제 성공 전 draft/journal 보존, 성공 후 tombstone과 subtree 일괄 폐기 | 실패 시 작성 내용을 잃지 않으면서 늦은 저장 응답이 삭제된 node cache와 저장 상태를 되살리는 것을 방지하기 위함 |
 
 ## Surprises & Discoveries
 

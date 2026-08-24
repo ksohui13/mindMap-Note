@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,7 +53,7 @@ describe("DashboardScreen", () => {
     expect(await screen.findByText("첫 마인드맵을 만들어 보세요")).toBeInTheDocument();
   });
 
-  it("renders real summary data and only the rename action", async () => {
+  it("renders real summary data with rename and delete actions", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ mindmaps: [mindmap] })));
     renderDashboard();
 
@@ -62,7 +62,42 @@ describe("DashboardScreen", () => {
     expect(screen.getByText(`${formatMindmapUpdatedAt(mindmap.updatedAt)} 수정`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "이름 변경" })).toBeInTheDocument();
     expect(screen.queryByText("내보내기")).not.toBeInTheDocument();
-    expect(screen.queryByText("삭제")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "삭제" })).toBeInTheDocument();
+  });
+
+  it("shows the confirmed node count and removes a mindmap only after deletion succeeds", async () => {
+    let resolveDelete: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Promise<Response>((resolve) => { resolveDelete = resolve; });
+      }
+      return Promise.resolve(jsonResponse({ mindmaps: [mindmap] }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDashboard();
+    await screen.findByText("제품 아이디어");
+
+    const entry = screen.getByRole("button", { name: "삭제" });
+    entry.focus();
+    fireEvent.click(entry);
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText("마인드맵과 포함된 노드 7개가 모두 삭제됩니다.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      `/api/mindmaps/${mindmap.id}`,
+      expect.objectContaining({ method: "DELETE" }),
+    );
+
+    const confirm = within(dialog).getByRole("button", { name: "삭제" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(await within(dialog).findByRole("button", { name: /삭제 중/ })).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE")?.[1]?.body)))
+      .toEqual({ expectedNodeCount: 7 });
+    expect(screen.getByText("제품 아이디어")).toBeInTheDocument();
+
+    resolveDelete?.(jsonResponse({ deletedMindmapId: mindmap.id, deletedNodeCount: 7 }));
+    await waitFor(() => expect(screen.queryByText("제품 아이디어")).not.toBeInTheDocument());
   });
 
   it("prevents duplicate creation and opens the created mindmap", async () => {

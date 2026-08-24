@@ -27,6 +27,7 @@ export function useNodeMutationCoordinator(
   const tails = useRef(new Map<string, Promise<unknown>>());
   const sequences = useRef(new Map<string, number>());
   const retries = useRef(new Map<string, () => void>());
+  const forgottenNodes = useRef(new Set<string>());
 
   useEffect(() => {
     for (const node of nodes) {
@@ -57,6 +58,9 @@ export function useNodeMutationCoordinator(
     operation,
     options = {},
   ) {
+    if (forgottenNodes.current.has(nodeId)) {
+      throw new Error("Node is no longer available.");
+    }
     const key = saveRecordKey(nodeId, kind);
     const sequence = supersede(nodeId, kind);
     setRecord(nodeId, kind, { phase: "saving" });
@@ -67,6 +71,7 @@ export function useNodeMutationCoordinator(
         const revision = revisions.current.get(nodeId);
         if (revision === undefined) throw new Error("Node revision is not available.");
         const response = await operation(revision);
+        if (forgottenNodes.current.has(nodeId)) return response;
         revisions.current.set(nodeId, response.node.revision);
         await options.onSuccess?.(response);
         if (sequences.current.get(key) === sequence) {
@@ -74,6 +79,7 @@ export function useNodeMutationCoordinator(
         }
         return response;
       } catch (error) {
+        if (forgottenNodes.current.has(nodeId)) throw error;
         if (error instanceof ApiClientError && error.status === 409) {
           const currentRevision = error.details?.currentRevision;
           if (Number.isInteger(currentRevision)) {
@@ -133,9 +139,37 @@ export function useNodeMutationCoordinator(
     for (const action of [...retries.current.values()]) action();
   }, []);
 
+  const forgetNodes = useCallback((nodeIds: readonly string[]) => {
+    const forgotten = new Set(nodeIds);
+    for (const nodeId of forgotten) {
+      forgottenNodes.current.add(nodeId);
+      revisions.current.delete(nodeId);
+      for (const kind of ["title", "position", "collapse", "content"] as const) {
+        supersede(nodeId, kind);
+        retries.current.delete(saveRecordKey(nodeId, kind));
+      }
+    }
+    setRecords((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => {
+        const separator = key.lastIndexOf(":");
+        return separator < 0 || !forgotten.has(key.slice(0, separator));
+      }),
+    ));
+  }, [supersede]);
+
   const overall = useMemo(() => aggregateSaveRecords(Object.values(records)), [records]);
 
-  return { run, markDirty, markIdle, getRecord, retry, retryAll, overall, records };
+  return {
+    run,
+    markDirty,
+    markIdle,
+    getRecord,
+    retry,
+    retryAll,
+    forgetNodes,
+    overall,
+    records,
+  };
 }
 
 type RunMutation = <T extends RevisionedResponse>(

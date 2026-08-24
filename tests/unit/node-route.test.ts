@@ -2,17 +2,23 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/mindmaps/[mindmapId]/nodes/route";
-import { PATCH } from "@/app/api/nodes/[nodeId]/route";
+import { GET as getDeletionImpact } from "@/app/api/nodes/[nodeId]/deletion-impact/route";
+import { DELETE, PATCH } from "@/app/api/nodes/[nodeId]/route";
 import { requireApiUser } from "@/server/auth/request";
 import { DomainError } from "@/server/domain/errors";
+import { ApiError } from "@/server/http/api";
 import {
   createChildNodeForUser,
+  deleteNodeSubtreeForUser,
+  getNodeDeletionImpactForUser,
   updateNodeTitleForUser,
 } from "@/server/domain/node.service";
 
 vi.mock("@/server/auth/request", () => ({ requireApiUser: vi.fn() }));
 vi.mock("@/server/domain/node.service", () => ({
   createChildNodeForUser: vi.fn(),
+  deleteNodeSubtreeForUser: vi.fn(),
+  getNodeDeletionImpactForUser: vi.fn(),
   updateNodeTitleForUser: vi.fn(),
 }));
 
@@ -35,7 +41,7 @@ const nodeRecord = {
   updatedAt,
 };
 
-function request(path: string, method: "POST" | "PATCH", body: unknown) {
+function request(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) {
   return new NextRequest(`http://localhost${path}`, {
     method,
     headers: {
@@ -43,15 +49,145 @@ function request(path: string, method: "POST" | "PATCH", body: unknown) {
       origin: "http://localhost",
       "content-type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
 beforeEach(() => {
   vi.mocked(requireApiUser).mockReset();
   vi.mocked(createChildNodeForUser).mockReset();
+  vi.mocked(deleteNodeSubtreeForUser).mockReset();
+  vi.mocked(getNodeDeletionImpactForUser).mockReset();
   vi.mocked(updateNodeTitleForUser).mockReset();
   vi.mocked(requireApiUser).mockResolvedValue({ id: userId, email: "user@example.test" });
+});
+
+describe("node deletion routes", () => {
+  const context = { params: Promise.resolve({ nodeId }) };
+
+  it("returns the current subtree impact", async () => {
+    vi.mocked(getNodeDeletionImpactForUser).mockResolvedValue({
+      node: { id: nodeId, title: "삭제할 노드" },
+      descendantCount: 3,
+      totalDeleteCount: 4,
+    });
+
+    const response = await getDeletionImpact(
+      request(`/api/nodes/${nodeId}/deletion-impact`, "GET"),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      node: { id: nodeId, title: "삭제할 노드" },
+      descendantCount: 3,
+      totalDeleteCount: 4,
+    });
+    expect(getNodeDeletionImpactForUser).toHaveBeenCalledWith(nodeId, userId);
+  });
+
+  it("hides foreign impact and rejects root impact", async () => {
+    vi.mocked(getNodeDeletionImpactForUser).mockRejectedValueOnce(
+      new DomainError("NOT_FOUND", "Node was not found."),
+    );
+    const missing = await getDeletionImpact(
+      request(`/api/nodes/${nodeId}/deletion-impact`, "GET"),
+      context,
+    );
+    expect(missing.status).toBe(404);
+
+    vi.mocked(getNodeDeletionImpactForUser).mockRejectedValueOnce(
+      new DomainError("ROOT_DELETE_FORBIDDEN", "Root node cannot be deleted."),
+    );
+    const root = await getDeletionImpact(
+      request(`/api/nodes/${nodeId}/deletion-impact`, "GET"),
+      context,
+    );
+    expect(root.status).toBe(409);
+    await expect(root.json()).resolves.toMatchObject({ error: { code: "ROOT_DELETE_FORBIDDEN" } });
+  });
+
+  it("deletes only after validating the expected subtree count", async () => {
+    vi.mocked(deleteNodeSubtreeForUser).mockResolvedValue({
+      deletedNodeId: nodeId,
+      deletedCount: 4,
+      mindmapUpdatedAt: updatedAt,
+    });
+
+    const response = await DELETE(
+      request(`/api/nodes/${nodeId}`, "DELETE", { expectedDeleteCount: 4 }),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deletedNodeId: nodeId,
+      deletedCount: 4,
+      mindmapUpdatedAt: updatedAt.toISOString(),
+    });
+    expect(deleteNodeSubtreeForUser).toHaveBeenCalledWith(nodeId, userId, 4);
+  });
+
+  it("rejects invalid input and exposes safe root/stale/not-found envelopes", async () => {
+    const invalid = await DELETE(
+      request(`/api/nodes/${nodeId}`, "DELETE", { expectedDeleteCount: 0 }),
+      context,
+    );
+    expect(invalid.status).toBe(400);
+    expect(deleteNodeSubtreeForUser).not.toHaveBeenCalled();
+
+    for (const [code, status] of [["CONFLICT", 409], ["NOT_FOUND", 404]] as const) {
+      vi.mocked(deleteNodeSubtreeForUser).mockRejectedValueOnce(
+        new DomainError(code, code === "CONFLICT" ? "Delete scope changed." : "Node was not found."),
+      );
+      const response = await DELETE(
+        request(`/api/nodes/${nodeId}`, "DELETE", { expectedDeleteCount: 1 }),
+        context,
+      );
+      expect(response.status).toBe(status);
+      await expect(response.json()).resolves.toMatchObject({ error: { code } });
+    }
+  });
+
+  it("rejects an invalid node ID before impact or deletion service calls", async () => {
+    const invalidContext = { params: Promise.resolve({ nodeId: "not-a-uuid" }) };
+    const impact = await getDeletionImpact(
+      request("/api/nodes/not-a-uuid/deletion-impact", "GET"),
+      invalidContext,
+    );
+    const deletion = await DELETE(
+      request("/api/nodes/not-a-uuid", "DELETE", { expectedDeleteCount: 1 }),
+      invalidContext,
+    );
+
+    expect(impact.status).toBe(400);
+    expect(deletion.status).toBe(400);
+    expect(getNodeDeletionImpactForUser).not.toHaveBeenCalled();
+    expect(deleteNodeSubtreeForUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin deletion before calling the service", async () => {
+    const response = await DELETE(new NextRequest(`http://localhost/api/nodes/${nodeId}`, {
+      method: "DELETE",
+      headers: { host: "localhost", origin: "https://attacker.example", "content-type": "application/json" },
+      body: JSON.stringify({ expectedDeleteCount: 1 }),
+    }), context);
+
+    expect(response.status).toBe(403);
+    expect(deleteNodeSubtreeForUser).not.toHaveBeenCalled();
+  });
+
+  it("requires an authenticated database session for deletion", async () => {
+    vi.mocked(requireApiUser).mockRejectedValueOnce(
+      new ApiError(401, "UNAUTHORIZED", "Authentication required."),
+    );
+    const response = await DELETE(
+      request(`/api/nodes/${nodeId}`, "DELETE", { expectedDeleteCount: 1 }),
+      context,
+    );
+    expect(response.status).toBe(401);
+    expect(deleteNodeSubtreeForUser).not.toHaveBeenCalled();
+  });
 });
 
 describe("node creation route", () => {

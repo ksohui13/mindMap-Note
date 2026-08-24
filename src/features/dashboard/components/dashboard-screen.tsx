@@ -4,8 +4,14 @@ import { useRouter } from "next/navigation";
 import { KeyboardEvent, useRef, useState } from "react";
 
 import { LogoutButton } from "@/features/auth/components/logout-button";
-import { useCreateMindmap, useMindmaps, useRenameMindmap } from "@/features/dashboard/hooks/use-mindmaps";
+import {
+  useCreateMindmap,
+  useDeleteMindmap,
+  useMindmaps,
+  useRenameMindmap,
+} from "@/features/dashboard/hooks/use-mindmaps";
 import type { MindmapSummaryDTO } from "@/features/mindmap/api/contracts";
+import { DeleteConfirmModal } from "@/shared/ui/delete-confirm-modal";
 
 export function formatMindmapUpdatedAt(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -128,10 +134,13 @@ function EmptyDashboard() {
 
 function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: () => void }) {
   const renameMindmap = useRenameMindmap();
+  const deleteMindmap = useDeleteMindmap();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(mindmap.title);
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
+  const deleteInFlight = useRef(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   function beginRename() {
     setDraft(mindmap.title);
@@ -169,6 +178,22 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
     }
   }
 
+  async function confirmDelete() {
+    if (deleteInFlight.current) return;
+    deleteInFlight.current = true;
+    try {
+      await deleteMindmap.mutateAsync({
+        id: mindmap.id,
+        expectedNodeCount: mindmap.nodeCount,
+      });
+      setDeleteOpen(false);
+    } catch {
+      // The modal keeps the server error visible and allows an explicit retry.
+    } finally {
+      deleteInFlight.current = false;
+    }
+  }
+
   return (
     <article className="group overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-card)]">
       <button type="button" aria-label={`${mindmap.title} 열기`} onClick={onOpen} className="relative block h-36 w-full overflow-hidden bg-gradient-to-br from-violet-50 to-indigo-100 text-left">
@@ -200,6 +225,16 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
               <summary aria-label={`${mindmap.title} 메뉴`} className="grid size-8 cursor-pointer list-none place-items-center rounded-lg text-lg text-[var(--muted)] hover:bg-[var(--background)]">⋯</summary>
               <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border border-[var(--border)] bg-white p-1 shadow-lg">
                 <button type="button" onClick={beginRename} className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--background)]">이름 변경</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    deleteMindmap.reset();
+                    setDeleteOpen(true);
+                  }}
+                  className="w-full rounded-md px-3 py-2 text-left text-sm font-bold text-[var(--danger)] hover:bg-red-50"
+                >
+                  삭제
+                </button>
               </div>
             </details>
           ) : null}
@@ -210,6 +245,20 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
           <span>노드 {mindmap.nodeCount}개</span>
         </div>
       </div>
+      <DeleteConfirmModal
+        open={deleteOpen}
+        title={`'${mindmap.title}' 마인드맵을 삭제하시겠습니까?`}
+        description={`마인드맵과 포함된 노드 ${mindmap.nodeCount}개가 모두 삭제됩니다.`}
+        pending={deleteMindmap.isPending}
+        error={deleteMindmap.isError
+          ? deleteMindmap.error.message || "마인드맵을 삭제하지 못했습니다."
+          : null}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) deleteMindmap.reset();
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </article>
   );
 }

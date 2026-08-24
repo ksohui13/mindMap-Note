@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test.describe("dashboard lifecycle", () => {
   test.skip(process.env.E2E_DATABASE_READY !== "true", "Requires migrated PostgreSQL test data.");
 
-  test("signup, create, open, return, and rename", async ({ page }) => {
+  test("signup, create, rename, safely delete, and reuse the maximum sequence", async ({ page }) => {
     const email = `dashboard-${Date.now()}@example.test`;
     await page.goto("/login");
     await page.getByRole("button", { name: "회원가입" }).click();
@@ -28,5 +28,17 @@ test.describe("dashboard lifecycle", () => {
     await titleInput.fill("고객 인터뷰 정리");
     await titleInput.press("Enter");
     await expect(page.getByText("고객 인터뷰 정리")).toBeVisible();
+
+    await page.getByLabel("고객 인터뷰 정리 메뉴").click();
+    await page.getByRole("button", { name: "삭제", exact: true }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("포함된 노드 1개");
+    await dialog.getByRole("button", { name: "삭제", exact: true }).click();
+    await expect(page.getByText("고객 인터뷰 정리")).not.toBeVisible();
+    await expect(page.getByText("전체 1개")).toBeVisible();
+
+    await page.getByRole("button", { name: "+ 새 마인드맵" }).click();
+    await page.getByRole("link", { name: "← Dashboard" }).click();
+    await expect(page.getByText("새로운 마인드맵 2", { exact: true })).toBeVisible();
   });
 });

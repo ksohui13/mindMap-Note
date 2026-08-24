@@ -1,10 +1,10 @@
-import type { Node, PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type Node, type PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/client";
 
-import { DomainError, mapPrismaError } from "./errors";
+import { DomainError, isPrismaError, mapPrismaError } from "./errors";
 import { normalizeTitle, assertFinitePosition } from "./normalization";
 import { countDescendants } from "./node.repository";
-import { touchMindmap } from "./mindmap.repository";
+import { lockMindmapForUser, touchMindmap } from "./mindmap.repository";
 
 export type CreateChildNodeInput = {
   mindmapId: string;
@@ -81,11 +81,7 @@ export async function createChildNodeForUser(
 
   try {
     return await client.$transaction(async (transaction) => {
-      const mindmap = await transaction.mindmap.findFirst({
-        where: { id: input.mindmapId, userId },
-        select: { id: true },
-      });
-      if (!mindmap) {
+      if (!(await lockMindmapForUser(input.mindmapId, userId, transaction))) {
         throw new DomainError("NOT_FOUND", "Mindmap was not found.");
       }
 
@@ -93,7 +89,7 @@ export async function createChildNodeForUser(
         where: { id: input.parentNodeId },
         select: { mindmapId: true },
       });
-      if (!parent || parent.mindmapId !== mindmap.id) {
+      if (!parent || parent.mindmapId !== input.mindmapId) {
         throw new DomainError(
           "DATA_INTEGRITY",
           "Parent node must belong to the same mindmap.",
@@ -102,16 +98,16 @@ export async function createChildNodeForUser(
 
       const node = await transaction.node.create({
         data: {
-          mindmapId: mindmap.id,
+          mindmapId: input.mindmapId,
           parentNodeId: input.parentNodeId,
           title,
           x: input.x,
           y: input.y,
         },
       });
-      await touchMindmap(mindmap.id, transaction);
+      await touchMindmap(input.mindmapId, transaction);
       const updatedMindmap = await transaction.mindmap.findUniqueOrThrow({
-        where: { id: mindmap.id },
+        where: { id: input.mindmapId },
         select: { updatedAt: true },
       });
 
@@ -344,6 +340,95 @@ export async function deleteNodeSubtree(
   } catch (error) {
     if (error instanceof DomainError) {
       throw error;
+    }
+    return mapPrismaError(error);
+  }
+}
+
+export async function getNodeDeletionImpactForUser(
+  nodeId: string,
+  userId: string,
+  client: PrismaClient = prisma,
+): Promise<{
+  node: { id: string; title: string };
+  descendantCount: number;
+  totalDeleteCount: number;
+}> {
+  try {
+    return await client.$transaction(async (transaction) => {
+      const node = await transaction.node.findFirst({
+        where: { id: nodeId, mindmap: { userId } },
+        select: { id: true, title: true, parentNodeId: true },
+      });
+      if (!node) throw new DomainError("NOT_FOUND", "Node was not found.");
+      if (node.parentNodeId === null) {
+        throw new DomainError("ROOT_DELETE_FORBIDDEN", "Root node cannot be deleted.");
+      }
+      const descendantCount = await countDescendants(node.id, transaction);
+      return {
+        node: { id: node.id, title: node.title },
+        descendantCount,
+        totalDeleteCount: descendantCount + 1,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    return mapPrismaError(error);
+  }
+}
+
+export async function deleteNodeSubtreeForUser(
+  nodeId: string,
+  userId: string,
+  expectedDeleteCount: number,
+  client: PrismaClient = prisma,
+): Promise<{ deletedNodeId: string; deletedCount: number; mindmapUpdatedAt: Date }> {
+  if (!Number.isInteger(expectedDeleteCount) || expectedDeleteCount < 1) {
+    throw new DomainError("INVALID_INPUT", "Expected delete count must be a positive integer.");
+  }
+
+  try {
+    return await client.$transaction(async (transaction) => {
+      const node = await transaction.node.findFirst({
+        where: { id: nodeId, mindmap: { userId } },
+        select: { id: true, mindmapId: true, parentNodeId: true },
+      });
+      if (!node) throw new DomainError("NOT_FOUND", "Node was not found.");
+      if (!(await lockMindmapForUser(node.mindmapId, userId, transaction))) {
+        throw new DomainError("NOT_FOUND", "Node was not found.");
+      }
+      if (node.parentNodeId === null) {
+        throw new DomainError("ROOT_DELETE_FORBIDDEN", "Root node cannot be deleted.");
+      }
+
+      const deletedCount = (await countDescendants(node.id, transaction)) + 1;
+      if (deletedCount !== expectedDeleteCount) {
+        throw new DomainError(
+          "CONFLICT",
+          "Node subtree changed. Review the deletion impact and try again.",
+        );
+      }
+
+      await transaction.node.delete({ where: { id: node.id } });
+      const mindmap = await transaction.mindmap.update({
+        where: { id: node.mindmapId },
+        data: { updatedAt: new Date() },
+        select: { updatedAt: true },
+      });
+      return {
+        deletedNodeId: node.id,
+        deletedCount,
+        mindmapUpdatedAt: mindmap.updatedAt,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    if (isPrismaError(error, "P2034")) {
+      throw new DomainError(
+        "CONFLICT",
+        "Node subtree changed. Review the deletion impact and try again.",
+        error,
+      );
     }
     return mapPrismaError(error);
   }

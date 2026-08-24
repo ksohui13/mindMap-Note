@@ -2,11 +2,12 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET, POST } from "@/app/api/mindmaps/route";
-import { GET as getMindmapRoute, PATCH } from "@/app/api/mindmaps/[mindmapId]/route";
+import { DELETE, GET as getMindmapRoute, PATCH } from "@/app/api/mindmaps/[mindmapId]/route";
 import { requireApiUser } from "@/server/auth/request";
 import { DomainError } from "@/server/domain/errors";
 import {
   createMindmapWithRoot,
+  deleteMindmapForUser,
   getMindmapDetailForUser,
   listMindmapsWithNodeCount,
   updateMindmapTitle,
@@ -16,6 +17,7 @@ import { ApiError } from "@/server/http/api";
 vi.mock("@/server/auth/request", () => ({ requireApiUser: vi.fn() }));
 vi.mock("@/server/domain/mindmap.service", () => ({
   createMindmapWithRoot: vi.fn(),
+  deleteMindmapForUser: vi.fn(),
   getMindmapDetailForUser: vi.fn(),
   listMindmapsWithNodeCount: vi.fn(),
   updateMindmapTitle: vi.fn(),
@@ -45,6 +47,7 @@ function request(path = "/api/mindmaps", method = "GET", body?: unknown) {
 beforeEach(() => {
   vi.mocked(requireApiUser).mockReset();
   vi.mocked(createMindmapWithRoot).mockReset();
+  vi.mocked(deleteMindmapForUser).mockReset();
   vi.mocked(getMindmapDetailForUser).mockReset();
   vi.mocked(listMindmapsWithNodeCount).mockReset();
   vi.mocked(updateMindmapTitle).mockReset();
@@ -175,5 +178,42 @@ describe("mindmap item route", () => {
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "NOT_FOUND" } });
     expect(updateMindmapTitle).toHaveBeenCalledWith(mindmapId, userId, "새 이름");
+  });
+
+  it("deletes an owned mindmap only when the node count still matches", async () => {
+    vi.mocked(deleteMindmapForUser).mockResolvedValue({
+      deletedMindmapId: mindmapId,
+      deletedNodeCount: 7,
+    });
+    const response = await DELETE(
+      request(`/api/mindmaps/${mindmapId}`, "DELETE", { expectedNodeCount: 7 }),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deletedMindmapId: mindmapId,
+      deletedNodeCount: 7,
+    });
+    expect(deleteMindmapForUser).toHaveBeenCalledWith(mindmapId, userId, 7);
+  });
+
+  it("rejects an invalid or stale mindmap deletion scope", async () => {
+    const invalid = await DELETE(
+      request(`/api/mindmaps/${mindmapId}`, "DELETE", { expectedNodeCount: -1 }),
+      context,
+    );
+    expect(invalid.status).toBe(400);
+    expect(deleteMindmapForUser).not.toHaveBeenCalled();
+
+    vi.mocked(deleteMindmapForUser).mockRejectedValue(
+      new DomainError("CONFLICT", "Delete scope changed."),
+    );
+    const stale = await DELETE(
+      request(`/api/mindmaps/${mindmapId}`, "DELETE", { expectedNodeCount: 6 }),
+      context,
+    );
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ error: { code: "CONFLICT" } });
   });
 });

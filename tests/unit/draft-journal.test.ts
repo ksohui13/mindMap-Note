@@ -5,6 +5,7 @@ import {
   draftJournalKey,
   readDraftJournal,
   removeDraftJournal,
+  removeMindmapDraftJournals,
   writeDraftJournal,
 } from "@/features/mindmap/lib/draft-journal";
 
@@ -52,5 +53,19 @@ describe("draft journal", () => {
     expect(readDraftJournal(unavailable, "map-a", "node-a")).toBeNull();
     expect(() => removeDraftJournal(unavailable, "map-a", "node-a")).not.toThrow();
     expect(writeDraftJournal(null, entry).ok).toBe(false);
+  });
+
+  it("removes only journals belonging to a deleted mindmap", () => {
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-a", "node-a", "a", 0));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-a", "node-b", "b", 0));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-b", "node-a", "keep", 0));
+    localStorage.setItem("unrelated", "keep");
+
+    removeMindmapDraftJournals(localStorage, "map-a");
+
+    expect(readDraftJournal(localStorage, "map-a", "node-a")).toBeNull();
+    expect(readDraftJournal(localStorage, "map-a", "node-b")).toBeNull();
+    expect(readDraftJournal(localStorage, "map-b", "node-a")?.contentMd).toBe("keep");
+    expect(localStorage.getItem("unrelated")).toBe("keep");
   });
 });

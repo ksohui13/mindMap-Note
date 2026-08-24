@@ -5,7 +5,8 @@ import { countDescendants } from "@/server/domain/node.repository";
 import {
   createChildNode,
   createChildNodeForUser,
-  deleteNodeSubtree,
+  deleteNodeSubtreeForUser,
+  getNodeDeletionImpactForUser,
   getNodeContentForUser,
   updateNode,
   updateNodeCollapseForUser,
@@ -204,6 +205,7 @@ describe("node domain services", () => {
 
   it("protects the root and deletes only the selected subtree", async () => {
     const owner = await createTreeOwner("subtree@example.test");
+    const stranger = await createTreeOwner("subtree-stranger@example.test");
     const child = await createChildNode(
       {
         mindmapId: owner.mindmap.id,
@@ -236,13 +238,54 @@ describe("node domain services", () => {
     );
 
     expect(await countDescendants(child.id, integrationClient)).toBe(1);
-    await expect(deleteNodeSubtree(owner.rootNode.id, integrationClient)).rejects.toMatchObject({
+    await expect(getNodeDeletionImpactForUser(
+      child.id,
+      owner.user.id,
+      integrationClient,
+    )).resolves.toEqual({
+      node: { id: child.id, title: "Child" },
+      descendantCount: 1,
+      totalDeleteCount: 2,
+    });
+    await expect(getNodeDeletionImpactForUser(
+      child.id,
+      stranger.user.id,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(deleteNodeSubtreeForUser(
+      owner.rootNode.id,
+      owner.user.id,
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({
       code: "ROOT_DELETE_FORBIDDEN",
     });
-    await expect(deleteNodeSubtree(child.id, integrationClient)).resolves.toEqual({
+    await expect(deleteNodeSubtreeForUser(
+      child.id,
+      owner.user.id,
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await integrationClient.node.findUnique({ where: { id: child.id } })).not.toBeNull();
+
+    const oldTimestamp = new Date("2000-01-01T00:00:00.000Z");
+    await integrationClient.mindmap.update({
+      where: { id: owner.mindmap.id },
+      data: { updatedAt: oldTimestamp },
+    });
+    await expect(deleteNodeSubtreeForUser(
+      child.id,
+      owner.user.id,
+      2,
+      integrationClient,
+    )).resolves.toMatchObject({
+      deletedNodeId: child.id,
       deletedCount: 2,
     });
     expect(await integrationClient.node.findUnique({ where: { id: sibling.id } })).not.toBeNull();
+    expect((await integrationClient.mindmap.findUniqueOrThrow({
+      where: { id: owner.mindmap.id },
+    })).updatedAt.getTime()).toBeGreaterThan(oldTimestamp.getTime());
   });
 
   it("touches the mindmap when a node changes", async () => {

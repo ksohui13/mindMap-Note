@@ -32,6 +32,11 @@ import {
 import { useMarkdownAutosave } from "@/features/mindmap/hooks/use-markdown-autosave";
 import { mindmapDetailQueryKey, useMindmapDetail } from "@/features/mindmap/hooks/use-mindmap-detail";
 import { useNodeContent } from "@/features/mindmap/hooks/use-node-content";
+import {
+  nodeDeletionImpactQueryKey,
+  useDeleteNode,
+  useNodeDeletionImpact,
+} from "@/features/mindmap/hooks/use-node-deletion";
 import { useNodeMutationCoordinator } from "@/features/mindmap/hooks/use-node-mutation-coordinator";
 import {
   toMindmapFlow,
@@ -49,6 +54,7 @@ import {
   type PositionOverrides,
 } from "@/features/mindmap/model/visible-tree";
 import { SaveStatus } from "@/shared/ui/save-status";
+import { DeleteConfirmModal } from "@/shared/ui/delete-confirm-modal";
 
 const nodeTypes: NodeTypes = { mindmap: MindmapNode };
 const edgeTypes: EdgeTypes = { mindmap: MindmapEdge };
@@ -107,8 +113,12 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   >>>({});
   const createLocks = useRef(new Set<string>());
   const nodeMutationLocks = useRef(new Set<string>());
+  const deleteInFlight = useRef(false);
+  const [deleteTargetNodeId, setDeleteTargetNodeId] = useState<string | null>(null);
 
   const saveCoordinator = useNodeMutationCoordinator(detail.data?.nodes ?? []);
+  const deleteNodeMutation = useDeleteNode();
+  const deletionImpact = useNodeDeletionImpact(deleteTargetNodeId);
   const selectedContent = useNodeContent(
     detailPanelOpen && selectedNodeId ? selectedNodeId : null,
   );
@@ -488,6 +498,80 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     queueMicrotask(() => fullscreenButtonRef.current?.focus());
   }, []);
 
+  const deleteTargetIds = useMemo(() => {
+    if (!deleteTargetNodeId || !detail.data) return [];
+    return [
+      deleteTargetNodeId,
+      ...getDescendantIds(detail.data.nodes, deleteTargetNodeId),
+    ];
+  }, [deleteTargetNodeId, detail.data]);
+
+  const openDeleteNode = useCallback((nodeId: string) => {
+    if (nodeId === detail.data?.rootNodeId) return;
+    deleteNodeMutation.reset();
+    setDeleteTargetNodeId(nodeId);
+  }, [deleteNodeMutation, detail.data?.rootNodeId]);
+
+  const confirmDeleteNode = useCallback(async () => {
+    if (
+      deleteInFlight.current ||
+      !deleteTargetNodeId ||
+      !deletionImpact.data ||
+      deleteTargetIds.length === 0
+    ) return;
+    deleteInFlight.current = true;
+    markdownAutosave.pauseNodes(deleteTargetIds);
+    const deletedIds = new Set(deleteTargetIds);
+
+    try {
+      const response = await deleteNodeMutation.mutateAsync({
+        nodeId: deleteTargetNodeId,
+        input: { expectedDeleteCount: deletionImpact.data.totalDeleteCount },
+      });
+      markdownAutosave.discardNodes(deleteTargetIds);
+      queryClient.setQueryData<MindmapDetailResponse>(
+        mindmapDetailQueryKey(mindmapId),
+        (current) => current
+          ? {
+              ...current,
+              mindmap: { ...current.mindmap, updatedAt: response.mindmapUpdatedAt },
+              nodes: current.nodes.filter((node) => !deletedIds.has(node.id)),
+            }
+          : current,
+      );
+      for (const nodeId of deleteTargetIds) {
+        queryClient.removeQueries({ queryKey: nodeDeletionImpactQueryKey(nodeId), exact: true });
+        createLocks.current.delete(nodeId);
+        nodeMutationLocks.current.delete(nodeId);
+      }
+      setPositionOverrides((current) => omitNodeKeys(current, deletedIds));
+      setCollapseOverrides((current) => omitNodeKeys(current, deletedIds));
+      setMutationErrors((current) => omitNodeKeys(current, deletedIds));
+      setPendingNodeIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))));
+      if (childCreateError && deletedIds.has(childCreateError.parentNodeId)) {
+        setChildCreateError(null);
+      }
+      if (editingNodeId && deletedIds.has(editingNodeId)) {
+        setEditingNodeId(null);
+        setEditDraft("");
+        setEditError(null);
+      }
+      if (selectedNodeId && deletedIds.has(selectedNodeId)) {
+        setSelectedNodeId(null);
+        setDetailFullscreenOpen(false);
+        setDetailPanelOpen(false);
+      }
+      setDeleteTargetNodeId(null);
+    } catch (error) {
+      markdownAutosave.resumeNodes(deleteTargetIds);
+      if (error instanceof ApiClientError && error.status === 409) {
+        await deletionImpact.refetch();
+      }
+    } finally {
+      deleteInFlight.current = false;
+    }
+  }, [childCreateError, deleteNodeMutation, deleteTargetIds, deleteTargetNodeId, deletionImpact, editingNodeId, markdownAutosave, mindmapId, queryClient, selectedNodeId]);
+
   if (detail.isPending && !detail.data) return <EditorLoadingState />;
   if (!detail.data) {
     return <EditorQueryError onRetry={() => void detail.refetch()} />;
@@ -532,6 +616,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         onCommitEdit={() => void commitEdit()}
         onStartEdit={startEdit}
         onToggleCollapse={toggleCollapse}
+        onDelete={openDeleteNode}
         onRetryMutation={retryNodeMutation}
         onRevertMutation={revertNodeMutation}
         onNodesChange={changeNodePositions}
@@ -571,6 +656,32 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
           storageWarning={markdownAutosave.storageWarning}
         />
       ) : null}
+      <DeleteConfirmModal
+        open={deleteTargetNodeId !== null}
+        title={`'${deletionImpact.data?.node.title ?? "노드"}' 노드를 삭제하시겠습니까?`}
+        description={deletionImpact.isPending || deletionImpact.isFetching
+          ? "삭제 영향을 확인하고 있습니다."
+          : deletionImpact.data?.descendantCount
+            ? `하위 개념 ${deletionImpact.data.descendantCount}개도 함께 삭제됩니다.`
+            : "이 노드만 삭제됩니다."}
+        pending={deleteNodeMutation.isPending}
+        confirmDisabled={!deletionImpact.data || deletionImpact.isFetching}
+        error={deletionImpact.isError
+          ? "삭제 영향을 불러오지 못했습니다."
+          : deleteNodeMutation.isError
+            ? deleteNodeMutation.error.message || "노드를 삭제하지 못했습니다."
+            : null}
+        onRetry={deletionImpact.isError
+          ? () => void deletionImpact.refetch()
+          : undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTargetNodeId(null);
+            deleteNodeMutation.reset();
+          }
+        }}
+        onConfirm={() => void confirmDeleteNode()}
+      />
     </main>
   );
 }
@@ -624,6 +735,7 @@ function MindmapCanvas({
   onCommitEdit,
   onStartEdit,
   onToggleCollapse,
+  onDelete,
   onRetryMutation,
   onRevertMutation,
   onNodesChange,
@@ -648,6 +760,7 @@ function MindmapCanvas({
   onCommitEdit: () => void;
   onStartEdit: (nodeId: string) => void;
   onToggleCollapse: (nodeId: string) => void;
+  onDelete: (nodeId: string) => void;
   onRetryMutation: (nodeId: string) => void;
   onRevertMutation: (nodeId: string) => void;
   onNodesChange: (changes: NodeChange<MindmapFlowNode>[]) => void;
@@ -671,6 +784,7 @@ function MindmapCanvas({
       onCommitEdit,
       onStartEdit,
       onToggleCollapse,
+      onDelete,
       onRetryMutation,
       onRevertMutation,
     }),
@@ -680,6 +794,7 @@ function MindmapCanvas({
       onRetryMutation,
       onRevertMutation,
       onToggleCollapse,
+      onDelete,
       parentNodeIds,
       pendingNodeIds,
       creatingParentId,
@@ -766,5 +881,14 @@ function EditorQueryError({ onRetry }: { onRetry: () => void }) {
         </div>
       </div>
     </main>
+  );
+}
+
+function omitNodeKeys<T>(
+  record: Readonly<Record<string, T>>,
+  nodeIds: ReadonlySet<string>,
+): Readonly<Record<string, T>> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([nodeId]) => !nodeIds.has(nodeId)),
   );
 }

@@ -3,12 +3,14 @@ import "server-only";
 export { DomainError } from "./errors";
 export {
   createMindmapWithRoot,
+  deleteMindmapForUser,
   type CreatedMindmap,
 } from "./mindmap.service";
 export {
   createChildNode,
   createChildNodeForUser,
-  deleteNodeSubtree,
+  deleteNodeSubtreeForUser,
+  getNodeDeletionImpactForUser,
   updateNode,
   updateNodeCollapseForUser,
   updateNodePositionForUser,

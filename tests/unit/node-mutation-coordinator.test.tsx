@@ -71,6 +71,27 @@ describe("node mutation coordinator", () => {
     expect(operation.mock.calls[1]?.[0]).toBe(7);
     await waitFor(() => expect(result.current.getRecord("a", "content").phase).toBe("saved"));
   });
+
+  it("forgets deleted nodes and ignores a late mutation response", async () => {
+    const { result } = renderHook(() => useNodeMutationCoordinator([{ id: "a", revision: 0 }]));
+    const request = deferred<{ node: { revision: number } }>();
+    const onSuccess = vi.fn();
+    let save!: Promise<{ node: { revision: number } }>;
+
+    act(() => {
+      save = result.current.run("a", "content", () => request.promise, { onSuccess });
+    });
+    act(() => result.current.forgetNodes(["a"]));
+    expect(result.current.getRecord("a", "content").phase).toBe("idle");
+
+    request.resolve({ node: { revision: 1 } });
+    await act(async () => { await save; });
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(result.current.getRecord("a", "content").phase).toBe("idle");
+    await expect(result.current.run("a", "title", async () => ({ node: { revision: 2 } })))
+      .rejects.toThrow("Node is no longer available");
+  });
 });
 
 function deferred<T>() {

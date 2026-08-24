@@ -11,6 +11,7 @@ import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import { mindmapDetailQueryKey } from "@/features/mindmap/hooks/use-mindmap-detail";
 
 export const nodeContentQueryKey = (nodeId: string) => ["nodes", nodeId, "content"] as const;
+export const nodeDeletedQueryKey = (nodeId: string) => ["nodes", nodeId, "deleted"] as const;
 
 export function useNodeContent(nodeId: string | null) {
   return useQuery({
@@ -33,6 +34,10 @@ export function useUpdateNodeContent(mindmapId: string) {
       keepalive?: boolean;
     }) => updateNodeContent(nodeId, input, { keepalive }),
     onSuccess: (response) => {
+      if (queryClient.getQueryData(nodeDeletedQueryKey(response.node.id)) === true) {
+        queryClient.removeQueries({ queryKey: nodeContentQueryKey(response.node.id), exact: true });
+        return;
+      }
       queryClient.setQueryData(nodeContentQueryKey(response.node.id), response);
       queryClient.setQueryData<MindmapDetailResponse>(
         mindmapDetailQueryKey(mindmapId),

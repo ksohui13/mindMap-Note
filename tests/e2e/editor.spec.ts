@@ -81,6 +81,10 @@ test.describe("mindmap editor canvas", () => {
     const grandchildInput = page.getByLabel("노드 제목");
     await grandchildInput.fill("손자 노드");
     await grandchildInput.press("Enter");
+    await page.getByLabel("루트 개념에 자식 노드 추가").click();
+    const siblingInput = page.getByLabel("노드 제목");
+    await siblingInput.fill("형제 노드");
+    await siblingInput.press("Enter");
 
     const mindmapId = page.url().match(/\/mindmaps\/([0-9a-f-]+)/)?.[1] ?? "";
     expect(mindmapId).toBeTruthy();
@@ -104,7 +108,7 @@ test.describe("mindmap editor canvas", () => {
     await expect(page.getByText("루트 개념", { exact: true })).toBeVisible();
     await expect(page.getByText("첫 번째 자식", { exact: true })).toBeVisible();
     await expect(page.getByText("손자 노드", { exact: true })).toBeVisible();
-    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
 
     const collapseSaved = page.waitForResponse((response) =>
       response.url().includes("/collapse") && response.request().method() === "PATCH",
@@ -137,6 +141,21 @@ test.describe("mindmap editor canvas", () => {
     } finally {
       await client.$disconnect();
     }
+
+    await expect(page.getByLabel("루트 개념 메뉴")).toHaveCount(0);
+    const viewportBeforeDelete = await page.locator(".react-flow__viewport").getAttribute("style");
+    await page.getByLabel("첫 번째 자식 메뉴").click();
+    await page.getByRole("button", { name: "삭제", exact: true }).click();
+    const deleteDialog = page.getByRole("alertdialog");
+    await expect(deleteDialog).toContainText("하위 개념 1개도 함께 삭제됩니다.");
+    await deleteDialog.getByRole("button", { name: "삭제", exact: true }).click();
+    await expect(page.getByText("첫 번째 자식", { exact: true })).not.toBeVisible();
+    await expect(page.getByText("손자 노드", { exact: true })).not.toBeVisible();
+    await expect(page.getByText("형제 노드", { exact: true })).toBeVisible();
+    await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", viewportBeforeDelete ?? "");
+    await page.reload();
+    await expect(page.getByText("형제 노드", { exact: true })).toBeVisible();
+    await expect(page.getByText("첫 번째 자식", { exact: true })).not.toBeVisible();
   });
 
   test("edits and previews isolated Markdown without losing the canvas viewport after fullscreen", async ({ page }) => {

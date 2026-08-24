@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createMindmapWithRoot } from "@/server/domain/mindmap.service";
+import { createMindmapWithRoot, deleteMindmapForUser } from "@/server/domain/mindmap.service";
+import { createChildNode } from "@/server/domain/node.service";
 import { createUser } from "@/server/domain/user.repository";
 
 import { integrationClient } from "./client";
@@ -47,12 +48,51 @@ describe("createMindmapWithRoot", () => {
     const second = await createMindmapWithRoot(user.id, integrationClient);
     const third = await createMindmapWithRoot(user.id, integrationClient);
 
-    await integrationClient.mindmap.delete({ where: { id: third.mindmap.id } });
+    await deleteMindmapForUser(third.mindmap.id, user.id, 1, integrationClient);
     expect((await createMindmapWithRoot(user.id, integrationClient)).mindmap.sequenceNo).toBe(3);
 
-    await integrationClient.mindmap.delete({ where: { id: second.mindmap.id } });
+    await deleteMindmapForUser(second.mindmap.id, user.id, 1, integrationClient);
     expect((await createMindmapWithRoot(user.id, integrationClient)).mindmap.sequenceNo).toBe(4);
     expect(first.mindmap.sequenceNo).toBe(1);
+  });
+
+  it("rejects stale or foreign deletion and cascades only after confirmation", async () => {
+    const owner = await createTestUser("delete-owner@example.test");
+    const stranger = await createTestUser("delete-stranger@example.test");
+    const created = await createMindmapWithRoot(owner.id, integrationClient);
+    await createChildNode({
+      mindmapId: created.mindmap.id,
+      parentNodeId: created.rootNode.id,
+      title: "Child",
+      x: 100,
+      y: 100,
+    }, integrationClient);
+
+    await expect(deleteMindmapForUser(
+      created.mindmap.id,
+      stranger.id,
+      2,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(deleteMindmapForUser(
+      created.mindmap.id,
+      owner.id,
+      1,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await integrationClient.node.count({ where: { mindmapId: created.mindmap.id } })).toBe(2);
+
+    await expect(deleteMindmapForUser(
+      created.mindmap.id,
+      owner.id,
+      2,
+      integrationClient,
+    )).resolves.toEqual({
+      deletedMindmapId: created.mindmap.id,
+      deletedNodeCount: 2,
+    });
+    expect(await integrationClient.mindmap.findUnique({ where: { id: created.mindmap.id } })).toBeNull();
+    expect(await integrationClient.node.count({ where: { mindmapId: created.mindmap.id } })).toBe(0);
   });
 
   it("allocates distinct sequences for concurrent requests", async () => {

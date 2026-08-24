@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import { MindmapEditor } from "@/features/mindmap/components/mindmap-editor";
+import { createDraftJournalEntry, draftJournalKey, writeDraftJournal } from "@/features/mindmap/lib/draft-journal";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 
@@ -35,7 +36,10 @@ function renderEditor(initialData?: MindmapDetailResponse, initialRootSelection 
   );
 }
 
-beforeEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
 
 describe("MindmapEditor", () => {
   it("renders nodes, an edge, navigation controls, and truthful server state", async () => {
@@ -52,6 +56,8 @@ describe("MindmapEditor", () => {
     expect(canvas).toHaveAttribute("data-nodes-draggable", "true");
     expect(canvas).toHaveAttribute("data-nodes-connectable", "false");
     expect(canvas).toHaveAttribute("data-delete-enabled", "false");
+    expect(screen.queryByLabelText("시작 메뉴")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("자식 메뉴")).toBeInTheDocument();
 
     await waitFor(() => expect(container.querySelectorAll(".react-flow__edge")).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "확대" }));
@@ -74,6 +80,58 @@ describe("MindmapEditor", () => {
     fireEvent.click(pane as Element);
     expect(screen.getByTestId("mindmap-node")).not.toHaveClass("ring-4");
     expect(screen.queryByLabelText("노드 상세 패널")).not.toBeInTheDocument();
+  });
+
+  it("confirms the latest subtree impact and cleans only the deleted subtree after success", async () => {
+    const subtreeDetail: MindmapDetailResponse = {
+      ...detail,
+      nodes: [
+        ...detail.nodes,
+        { id: "grandchild", parentNodeId: "child", title: "손자", x: 440, y: 80, isCollapsed: false, revision: 0 },
+        { id: "sibling", parentNodeId: "root", title: "형제", x: 220, y: 180, isCollapsed: false, revision: 0 },
+      ],
+    };
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-1", "child", "draft", 0));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-1", "grandchild", "draft", 0));
+    writeDraftJournal(localStorage, createDraftJournalEntry("map-1", "sibling", "keep", 0));
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/deletion-impact")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          node: { id: "child", title: "자식" },
+          descendantCount: 1,
+          totalDeleteCount: 2,
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      if (init?.method === "DELETE") {
+        return Promise.resolve(new Response(JSON.stringify({
+          deletedNodeId: "child",
+          deletedCount: 2,
+          mindmapUpdatedAt: "2026-08-24T01:00:00.000Z",
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(subtreeDetail);
+
+    const childMenu = screen.getByLabelText("자식 메뉴").parentElement;
+    expect(childMenu).not.toBeNull();
+    fireEvent.click(screen.getByLabelText("자식 메뉴"));
+    fireEvent.click((childMenu as HTMLElement).querySelector("button") as HTMLButtonElement);
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(await within(dialog).findByText("하위 개념 1개도 함께 삭제됩니다.")).toBeInTheDocument();
+    expect(screen.getByText("자식")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "삭제" }));
+
+    await waitFor(() => expect(screen.queryByText("자식")).not.toBeInTheDocument());
+    expect(screen.queryByText("손자")).not.toBeInTheDocument();
+    expect(screen.getByText("형제")).toBeInTheDocument();
+    const deleteCall = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+    expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({ expectedDeleteCount: 2 });
+    expect(localStorage.getItem(draftJournalKey("map-1", "child"))).toBeNull();
+    expect(localStorage.getItem(draftJournalKey("map-1", "grandchild"))).toBeNull();
+    expect(localStorage.getItem(draftJournalKey("map-1", "sibling"))).not.toBeNull();
   });
 
   it("isolates node drafts and preserves canvas state through fullscreen", async () => {

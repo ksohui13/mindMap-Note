@@ -2,9 +2,14 @@ import type {
   CreateNodeInput,
   CreateNodeResponse,
   CreateMindmapResponse,
+  DeleteMindmapInput,
+  DeleteMindmapResponse,
+  DeleteNodeInput,
+  DeleteNodeResponse,
   MindmapDetailResponse,
   MindmapListResponse,
   NodeContentResponse,
+  NodeDeletionImpactResponse,
   UpdateMindmapInput,
   UpdateMindmapResponse,
   UpdateNodeResponse,
@@ -136,9 +141,43 @@ export async function updateNodeCollapse(
   );
 }
 
+export async function deleteMindmap(
+  mindmapId: string,
+  input: DeleteMindmapInput,
+): Promise<DeleteMindmapResponse> {
+  return parseResponse(
+    await fetch(`/api/mindmaps/${mindmapId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
 export async function fetchNodeContent(nodeId: string): Promise<NodeContentResponse> {
   return parseResponse(
     await fetch(`/api/nodes/${nodeId}/content`, { cache: "no-store" }),
+  );
+}
+
+export async function fetchNodeDeletionImpact(
+  nodeId: string,
+): Promise<NodeDeletionImpactResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}/deletion-impact`, { cache: "no-store" }),
+  );
+}
+
+export async function deleteNode(
+  nodeId: string,
+  input: DeleteNodeInput,
+): Promise<DeleteNodeResponse> {
+  return parseResponse(
+    await fetch(`/api/nodes/${nodeId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   );
 }
 

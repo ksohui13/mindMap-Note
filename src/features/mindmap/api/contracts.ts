@@ -14,6 +14,10 @@ export type CreateMindmapResponse = {
   rootNodeId: string;
 };
 export type UpdateMindmapResponse = { mindmap: MindmapSummaryDTO };
+export type DeleteMindmapResponse = Readonly<{
+  deletedMindmapId: string;
+  deletedNodeCount: number;
+}>;
 
 export type MindmapNodeDTO = Readonly<{
   id: string;
@@ -42,6 +46,18 @@ export type CreateNodeResponse = Readonly<{
 
 export type UpdateNodeResponse = Readonly<{
   node: MindmapNodeDTO;
+}>;
+
+export type NodeDeletionImpactResponse = Readonly<{
+  node: Readonly<{ id: string; title: string }>;
+  descendantCount: number;
+  totalDeleteCount: number;
+}>;
+
+export type DeleteNodeResponse = Readonly<{
+  deletedNodeId: string;
+  deletedCount: number;
+  mindmapUpdatedAt: string;
 }>;
 
 export const NODE_CONTENT_MAX_BYTES = 256 * 1_024;
@@ -97,6 +113,10 @@ export const updateNodeCollapseInputSchema = z.object({
   revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
 });
 
+export const deleteMindmapInputSchema = z.object({
+  expectedNodeCount: z.number().int().nonnegative("예상 노드 수가 올바르지 않습니다."),
+});
+
 export const updateNodeContentInputSchema = z.object({
   contentMd: z.string().refine(
     (value) => new TextEncoder().encode(value).byteLength <= NODE_CONTENT_MAX_BYTES,
@@ -105,9 +125,15 @@ export const updateNodeContentInputSchema = z.object({
   revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
 });
 
+export const deleteNodeInputSchema = z.object({
+  expectedDeleteCount: z.number().int().positive("예상 삭제 수가 올바르지 않습니다."),
+});
+
 export type UpdateMindmapInput = z.infer<typeof updateMindmapInputSchema>;
+export type DeleteMindmapInput = z.infer<typeof deleteMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
 export type UpdateNodeTitleInput = z.infer<typeof updateNodeTitleInputSchema>;
 export type UpdateNodePositionInput = z.infer<typeof updateNodePositionInputSchema>;
 export type UpdateNodeCollapseInput = z.infer<typeof updateNodeCollapseInputSchema>;
 export type UpdateNodeContentInput = z.infer<typeof updateNodeContentInputSchema>;
+export type DeleteNodeInput = z.infer<typeof deleteNodeInputSchema>;
