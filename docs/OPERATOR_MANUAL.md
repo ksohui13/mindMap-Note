@@ -4,6 +4,33 @@
 
 > 결론부터 말하면 **Docker는 필수가 아닙니다.** 다만 로그인, 마인드맵 생성, 자동저장, 삭제, Markdown 내보내기 등 실제 기능은 PostgreSQL을 사용하므로, 전체 기능을 보려면 로컬 또는 외부에 PostgreSQL 데이터베이스 하나가 필요합니다. 테이블을 직접 만들 필요는 없으며, 프로젝트의 Prisma migration 명령이 자동으로 구성합니다.
 
+## 빠른 시작: Neon을 사용하는 경우
+
+Neon의 연결 주소와 `SESSION_SECRET`을 `.env`에 입력한 뒤, 프로젝트를 처음 준비할 때 아래 명령을 순서대로 한 번 실행합니다. PowerShell의 스크립트 실행 정책 때문에 `npm`이 차단되는 환경을 고려하여 `npm.cmd`를 사용합니다.
+
+```powershell
+npm.cmd install
+npm.cmd run db:generate
+npm.cmd run db:migrate:deploy
+npm.cmd run dev
+```
+
+마지막 명령이 실행된 상태에서 브라우저로 <http://localhost:3000>에 접속합니다. 서버를 종료할 때는 해당 터미널에서 `Ctrl+C`를 누릅니다.
+
+설치와 데이터베이스 준비를 마친 이후에는 평소 다음 명령만 실행하면 됩니다.
+
+```powershell
+npm.cmd run dev
+```
+
+다음 상황에서는 관련 준비 명령을 다시 실행합니다.
+
+- `package.json` 또는 의존성이 변경된 경우: `npm.cmd install`
+- Prisma 스키마나 migration이 변경된 경우: `npm.cmd run db:generate` 후 `npm.cmd run db:migrate:deploy`
+- `.env`를 변경한 경우: 실행 중인 서버를 `Ctrl+C`로 종료한 후 `npm.cmd run dev`
+
+Neon은 외부 PostgreSQL이므로 앱을 실행할 때 Docker나 로컬 PostgreSQL을 별도로 시작할 필요가 없습니다.
+
 ## 1. 가장 먼저 선택할 실행 방식
 
 | 목적 | 앱 실행 방식 | PostgreSQL | 추천 대상 |
