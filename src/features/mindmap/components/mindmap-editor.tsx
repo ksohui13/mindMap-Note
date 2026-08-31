@@ -12,10 +12,12 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 
 import { ApiClientError } from "@/features/mindmap/api/client";
+import { useDeleteMindmap, useRenameMindmap } from "@/features/dashboard/hooks/use-mindmaps";
 import { MindmapEdge } from "@/features/mindmap/components/mindmap-edge";
 import { MindmapNode } from "@/features/mindmap/components/mindmap-node";
 import {
@@ -81,12 +83,19 @@ export function MindmapEditor(props: MindmapEditorProps) {
 }
 
 function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = false }: MindmapEditorProps) {
+  const router = useRouter();
   const detail = useMindmapDetail(mindmapId, initialData);
   const queryClient = useQueryClient();
   const createNodeMutation = useCreateNode();
   const updateTitleMutation = useUpdateNodeTitle();
   const updatePositionMutation = useUpdateNodePosition();
   const updateCollapseMutation = useUpdateNodeCollapse();
+  const createNode = createNodeMutation.mutateAsync;
+  const updateNodeTitle = updateTitleMutation.mutateAsync;
+  const updateNodePosition = updatePositionMutation.mutateAsync;
+  const updateNodeCollapse = updateCollapseMutation.mutateAsync;
+  const renameMindmap = useRenameMindmap();
+  const deleteMindmap = useDeleteMindmap();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
   );
@@ -96,18 +105,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const [editingNodeId, setEditingNodeId] = useState<string | null>(
     initialRootSelection && initialData ? initialData.rootNodeId : null,
   );
-  const [editDraft, setEditDraft] = useState(
-    initialRootSelection && initialData
-      ? initialData.nodes.find((node) => node.id === initialData.rootNodeId)?.title ?? ""
-      : "",
-  );
   const [editError, setEditError] = useState<string | null>(null);
-  const [savingNodeId, setSavingNodeId] = useState<string | null>(null);
-  const [creatingParentId, setCreatingParentId] = useState<string | null>(null);
-  const [childCreateError, setChildCreateError] = useState<{
-    parentNodeId: string;
-    message: string;
-  } | null>(null);
+  const [savingNodeIds, setSavingNodeIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [creatingNodeIds, setCreatingNodeIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [creationErrors, setCreationErrors] = useState<Readonly<Record<string, string>>>({});
   const [positionOverrides, setPositionOverrides] = useState<PositionOverrides>({});
   const [collapseOverrides, setCollapseOverrides] = useState<CollapseOverrides>({});
   const [pendingNodeIds, setPendingNodeIds] = useState<ReadonlySet<string>>(
@@ -118,8 +119,13 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     { kind: "position" | "collapse"; message: string }
   >>>({});
   const createLocks = useRef(new Set<string>());
+  const pendingCreateInputs = useRef(new Map<string, Parameters<typeof createNodeMutation.mutateAsync>[0]>());
+  const creationPromises = useRef(new Map<string, Promise<boolean>>());
   const nodeMutationLocks = useRef(new Set<string>());
+  const titleCommitLocks = useRef(new Set<string>());
   const deleteInFlight = useRef(false);
+  const deleteMindmapInFlight = useRef(false);
+  const [deleteMindmapOpen, setDeleteMindmapOpen] = useState(false);
   const [deleteTargetNodeId, setDeleteTargetNodeId] = useState<string | null>(null);
   const [exportContext, setExportContext] = useState<Readonly<{
     defaultScope: ExportScope;
@@ -127,6 +133,11 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   }> | null>(null);
 
   const saveCoordinator = useNodeMutationCoordinator(detail.data?.nodes ?? []);
+  const {
+    markIdle: markNodeIdle,
+    registerRevision,
+    run: runNodeMutation,
+  } = saveCoordinator;
   const deleteNodeMutation = useDeleteNode();
   const deletionImpact = useNodeDeletionImpact(deleteTargetNodeId);
   const selectedContent = useNodeContent(
@@ -138,6 +149,8 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     selectedContent: selectedContent.data,
     coordinator: saveCoordinator,
   });
+  const { flush: flushMarkdown } = markdownAutosave;
+  const refetchDetail = detail.refetch;
 
   const effectiveNodes = useMemo(
     () => applyNodeViewOverrides(
@@ -152,6 +165,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       ? selectVisibleNodes(effectiveNodes, detail.data.rootNodeId)
       : [],
     [detail.data, effectiveNodes],
+  );
+  const visibleDetail = useMemo(
+    () => detail.data ? { ...detail.data, nodes: visibleNodes } : undefined,
+    [detail.data, visibleNodes],
   );
   const parentNodeIds = useMemo(
     () => nodesWithChildren(detail.data?.nodes ?? []),
@@ -191,51 +208,54 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   }, []);
 
   const startEdit = useCallback((nodeId: string) => {
-    if (savingNodeId || creatingParentId || nodeMutationLocks.current.has(nodeId)) return;
+    if (savingNodeIds.has(nodeId) || nodeMutationLocks.current.has(nodeId)) return;
     const node = detail.data?.nodes.find((candidate) => candidate.id === nodeId);
     if (!node) return;
     setSelectedNodeId(nodeId);
     setEditingNodeId(nodeId);
-    setEditDraft(node.title);
     setEditError(null);
-  }, [creatingParentId, detail.data, savingNodeId]);
+  }, [detail.data, savingNodeIds]);
 
   const cancelEdit = useCallback(() => {
-    if (savingNodeId === editingNodeId) return;
+    if (editingNodeId && savingNodeIds.has(editingNodeId)) return;
     setEditingNodeId(null);
-    setEditDraft("");
     setEditError(null);
-  }, [editingNodeId, savingNodeId]);
+  }, [editingNodeId, savingNodeIds]);
 
-  const commitEdit = useCallback(async () => {
+  const commitEdit = useCallback(async (nodeId: string, submittedTitle: string) => {
     if (
-      !editingNodeId ||
-      nodeMutationLocks.current.has(editingNodeId)
+      editingNodeId !== nodeId ||
+      titleCommitLocks.current.has(nodeId) ||
+      nodeMutationLocks.current.has(nodeId)
     ) return;
-    const node = detail.data?.nodes.find((candidate) => candidate.id === editingNodeId);
-    if (!node) return;
-    const title = editDraft.trim();
-    if (!title) {
-      setEditDraft(node.title);
-      setEditError("노드 제목을 입력해 주세요.");
-      return;
-    }
-    if (title === node.title) {
-      setEditingNodeId(null);
-      setEditDraft("");
-      setEditError(null);
-      return;
-    }
-
-    nodeMutationLocks.current.add(node.id);
-    setSavingNodeId(node.id);
-    setEditError(null);
-
+    titleCommitLocks.current.add(nodeId);
     try {
-      await saveCoordinator.run(
+      const creation = creationPromises.current.get(nodeId);
+      if (creation && !(await creation)) {
+        setEditError("노드 생성을 다시 시도한 뒤 제목을 저장해 주세요.");
+        return;
+      }
+      const currentDetail = queryClient.getQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(mindmapId));
+      const node = currentDetail?.nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      const title = submittedTitle.trim();
+      if (!title) {
+        setEditError("노드 제목을 입력해 주세요.");
+        return;
+      }
+      if (title === node.title) {
+        setEditingNodeId(null);
+        setEditError(null);
+        return;
+      }
+
+      nodeMutationLocks.current.add(node.id);
+      setSavingNodeIds((current) => new Set(current).add(node.id));
+      setEditError(null);
+      await runNodeMutation(
         node.id,
         "title",
-        (revision) => updateTitleMutation.mutateAsync({
+        (revision) => updateNodeTitle({
           nodeId: node.id,
           input: { title, revision },
         }),
@@ -253,11 +273,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
                 : current,
             );
             setEditingNodeId(null);
-            setEditDraft("");
           },
           onError: async (error) => {
             if (error instanceof ApiClientError && error.status === 409) {
-              await detail.refetch();
+              await refetchDetail();
               setEditError("다른 변경사항을 반영했습니다. 다시 시도해 주세요.");
               return;
             }
@@ -268,15 +287,45 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     } catch {
       // The coordinator records the failed operation and exposes the retry action.
     } finally {
-      nodeMutationLocks.current.delete(node.id);
-      setSavingNodeId(null);
+      titleCommitLocks.current.delete(nodeId);
+      nodeMutationLocks.current.delete(nodeId);
+      setSavingNodeIds((current) => {
+        const next = new Set(current);
+        next.delete(nodeId);
+        return next;
+      });
     }
-  }, [detail, editDraft, editingNodeId, mindmapId, queryClient, saveCoordinator, updateTitleMutation]);
+  }, [editingNodeId, mindmapId, queryClient, refetchDetail, runNodeMutation, updateNodeTitle]);
 
-  const addChild = useCallback(async (parentNodeId: string) => {
+  const persistOptimisticNode = useCallback((nodeId: string) => {
+    const input = pendingCreateInputs.current.get(nodeId);
+    if (!input || creationPromises.current.has(nodeId)) return;
+    setCreatingNodeIds((current) => new Set(current).add(nodeId));
+    setCreationErrors((current) => omitKey(current, nodeId));
+    const task = createNode(input).then((response) => {
+      replaceCachedNode(response.node);
+      registerRevision(response.node.id, response.node.revision);
+      pendingCreateInputs.current.delete(nodeId);
+      return true;
+    }).catch((error: unknown) => {
+      setCreationErrors((current) => ({
+        ...current,
+        [nodeId]: error instanceof Error ? error.message : "하위 노드를 만들지 못했습니다.",
+      }));
+      return false;
+    }).finally(() => {
+      creationPromises.current.delete(nodeId);
+      setCreatingNodeIds((current) => {
+        const next = new Set(current);
+        next.delete(nodeId);
+        return next;
+      });
+    });
+    creationPromises.current.set(nodeId, task);
+  }, [createNode, registerRevision, replaceCachedNode]);
+
+  const addChild = useCallback((parentNodeId: string) => {
     if (
-      savingNodeId ||
-      creatingParentId ||
       createLocks.current.has(parentNodeId) ||
       nodeMutationLocks.current.has(parentNodeId)
     ) return;
@@ -285,45 +334,54 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     if (!current || !parent || parent.isCollapsed) return;
 
     createLocks.current.add(parentNodeId);
-    setCreatingParentId(parentNodeId);
-    setChildCreateError(null);
     const position = calculateChildPosition(parent, effectiveNodes);
+    const nodeId = crypto.randomUUID();
+    const input = {
+      mindmapId,
+      input: { id: nodeId, parentNodeId, title: "새 노드", ...position },
+    };
+    pendingCreateInputs.current.set(nodeId, input);
+    registerRevision(nodeId, 0);
+    queryClient.setQueryData<MindmapDetailResponse>(
+      mindmapDetailQueryKey(mindmapId),
+      (cached) => cached
+        ? {
+            ...cached,
+            nodes: [...cached.nodes, {
+              id: nodeId,
+              parentNodeId,
+              title: "새 노드",
+              ...position,
+              isCollapsed: false,
+              revision: 0,
+            }],
+          }
+        : cached,
+    );
+    setSelectedNodeId(nodeId);
+    setEditingNodeId(nodeId);
+    setEditError(null);
+    createLocks.current.delete(parentNodeId);
+    persistOptimisticNode(nodeId);
+  }, [detail.data, effectiveNodes, mindmapId, persistOptimisticNode, queryClient, registerRevision]);
 
-    try {
-      const response = await createNodeMutation.mutateAsync({
-        mindmapId,
-        input: {
-          parentNodeId,
-          title: "새 노드",
-          ...position,
-        },
-      });
-      queryClient.setQueryData<MindmapDetailResponse>(
-        mindmapDetailQueryKey(mindmapId),
-        (cached) => cached
-          ? {
-              ...cached,
-              mindmap: { ...cached.mindmap, updatedAt: response.mindmapUpdatedAt },
-              nodes: [...cached.nodes, response.node],
-            }
-          : cached,
-      );
-      setSelectedNodeId(response.node.id);
-      setEditingNodeId(response.node.id);
-      setEditDraft(response.node.title);
-      setEditError(null);
-    } catch (error) {
-      setChildCreateError({
-        parentNodeId,
-        message: error instanceof Error ? error.message : "자식 노드를 만들지 못했습니다.",
-      });
-    } finally {
-      createLocks.current.delete(parentNodeId);
-      setCreatingParentId((currentParentId) =>
-        currentParentId === parentNodeId ? null : currentParentId,
-      );
-    }
-  }, [createNodeMutation, creatingParentId, detail.data, effectiveNodes, mindmapId, queryClient, savingNodeId]);
+  const retryCreate = useCallback((nodeId: string) => {
+    persistOptimisticNode(nodeId);
+  }, [persistOptimisticNode]);
+
+  const discardOptimisticNode = useCallback((nodeId: string) => {
+    if (creationPromises.current.has(nodeId)) return;
+    pendingCreateInputs.current.delete(nodeId);
+    setCreationErrors((current) => omitKey(current, nodeId));
+    queryClient.setQueryData<MindmapDetailResponse>(
+      mindmapDetailQueryKey(mindmapId),
+      (current) => current
+        ? { ...current, nodes: current.nodes.filter((node) => node.id !== nodeId) }
+        : current,
+    );
+    if (editingNodeId === nodeId) setEditingNodeId(null);
+    if (selectedNodeId === nodeId) setSelectedNodeId(null);
+  }, [editingNodeId, mindmapId, queryClient, selectedNodeId]);
 
   const persistPosition = useCallback(async (nodeId: string, position: NodePosition) => {
     if (nodeMutationLocks.current.has(nodeId)) return;
@@ -334,10 +392,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     clearMutationError(nodeId);
 
     try {
-      await saveCoordinator.run(
+      await runNodeMutation(
         nodeId,
         "position",
-        (revision) => updatePositionMutation.mutateAsync({
+        (revision) => updateNodePosition({
           nodeId,
           input: { ...position, revision },
         }),
@@ -352,7 +410,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
           },
           onError: async (error) => {
             const isConflict = error instanceof ApiClientError && error.status === 409;
-            if (isConflict) await detail.refetch();
+            if (isConflict) await refetchDetail();
             setMutationErrors((current) => ({
               ...current,
               [nodeId]: {
@@ -371,7 +429,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       nodeMutationLocks.current.delete(nodeId);
       setNodePending(nodeId, false);
     }
-  }, [clearMutationError, detail, replaceCachedNode, saveCoordinator, setNodePending, updatePositionMutation]);
+  }, [clearMutationError, detail.data?.nodes, refetchDetail, replaceCachedNode, runNodeMutation, setNodePending, updateNodePosition]);
 
   const persistCollapse = useCallback(async (nodeId: string, isCollapsed: boolean) => {
     if (nodeMutationLocks.current.has(nodeId)) return;
@@ -382,10 +440,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     clearMutationError(nodeId);
 
     try {
-      await saveCoordinator.run(
+      await runNodeMutation(
         nodeId,
         "collapse",
-        (revision) => updateCollapseMutation.mutateAsync({
+        (revision) => updateNodeCollapse({
           nodeId,
           input: { isCollapsed, revision },
         }),
@@ -400,7 +458,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
           },
           onError: async (error) => {
             const isConflict = error instanceof ApiClientError && error.status === 409;
-            if (isConflict) await detail.refetch();
+            if (isConflict) await refetchDetail();
             setMutationErrors((current) => ({
               ...current,
               [nodeId]: {
@@ -419,7 +477,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       nodeMutationLocks.current.delete(nodeId);
       setNodePending(nodeId, false);
     }
-  }, [clearMutationError, detail, replaceCachedNode, saveCoordinator, setNodePending, updateCollapseMutation]);
+  }, [clearMutationError, detail.data?.nodes, refetchDetail, replaceCachedNode, runNodeMutation, setNodePending, updateNodeCollapse]);
 
   const changeNodePositions = useCallback((changes: NodeChange<MindmapFlowNode>[]) => {
     if (!changes.some((change) => change.type === "position" && change.position)) return;
@@ -445,17 +503,16 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     if (nextCollapsed && detail.data) {
       const descendants = getDescendantIds(detail.data.nodes, nodeId);
       if (selectedNodeId && descendants.has(selectedNodeId)) {
-        if (detailPanelOpen) void markdownAutosave.flush(selectedNodeId);
+        if (detailPanelOpen) void flushMarkdown(selectedNodeId);
         setSelectedNodeId(nodeId);
       }
       if (editingNodeId && descendants.has(editingNodeId)) {
         setEditingNodeId(null);
-        setEditDraft("");
         setEditError(null);
       }
     }
     void persistCollapse(nodeId, nextCollapsed);
-  }, [clearMutationError, detail.data, detailPanelOpen, editingNodeId, effectiveNodes, markdownAutosave, parentNodeIds, persistCollapse, selectedNodeId]);
+  }, [clearMutationError, detail.data, detailPanelOpen, editingNodeId, effectiveNodes, flushMarkdown, parentNodeIds, persistCollapse, selectedNodeId]);
 
   const retryNodeMutation = useCallback((nodeId: string) => {
     const error = mutationErrors[nodeId];
@@ -486,27 +543,36 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       });
     }
     clearMutationError(nodeId);
-    saveCoordinator.markIdle(nodeId, error.kind);
-  }, [clearMutationError, mutationErrors, saveCoordinator]);
+    markNodeIdle(nodeId, error.kind);
+  }, [clearMutationError, markNodeIdle, mutationErrors]);
 
   const openNodeDetail = useCallback((nodeId: string) => {
     if (selectedNodeId && selectedNodeId !== nodeId) {
-      void markdownAutosave.flush(selectedNodeId);
+      void flushMarkdown(selectedNodeId);
     }
     setSelectedNodeId(nodeId);
     setDetailPanelOpen(true);
-  }, [markdownAutosave, selectedNodeId]);
+  }, [flushMarkdown, selectedNodeId]);
 
   const closeNodeDetail = useCallback(() => {
-    if (selectedNodeId) void markdownAutosave.flush(selectedNodeId);
+    if (selectedNodeId) void flushMarkdown(selectedNodeId);
     setDetailFullscreenOpen(false);
     setDetailPanelOpen(false);
-  }, [markdownAutosave, selectedNodeId]);
+  }, [flushMarkdown, selectedNodeId]);
 
   const closeFullscreen = useCallback(() => {
     setDetailFullscreenOpen(false);
     queueMicrotask(() => fullscreenButtonRef.current?.focus());
   }, []);
+
+  const selectCanvasNode = useCallback((nodeId: string | null) => {
+    if (nodeId) {
+      openNodeDetail(nodeId);
+      return;
+    }
+    setSelectedNodeId(null);
+    closeNodeDetail();
+  }, [closeNodeDetail, openNodeDetail]);
 
   const deleteTargetIds = useMemo(() => {
     if (!deleteTargetNodeId || !detail.data) return [];
@@ -605,12 +671,8 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       setCollapseOverrides((current) => omitNodeKeys(current, deletedIds));
       setMutationErrors((current) => omitNodeKeys(current, deletedIds));
       setPendingNodeIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))));
-      if (childCreateError && deletedIds.has(childCreateError.parentNodeId)) {
-        setChildCreateError(null);
-      }
       if (editingNodeId && deletedIds.has(editingNodeId)) {
         setEditingNodeId(null);
-        setEditDraft("");
         setEditError(null);
       }
       if (selectedNodeId && deletedIds.has(selectedNodeId)) {
@@ -627,7 +689,23 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     } finally {
       deleteInFlight.current = false;
     }
-  }, [childCreateError, deleteNodeMutation, deleteTargetIds, deleteTargetNodeId, deletionImpact, editingNodeId, markdownAutosave, mindmapId, queryClient, selectedNodeId]);
+  }, [deleteNodeMutation, deleteTargetIds, deleteTargetNodeId, deletionImpact, editingNodeId, markdownAutosave, mindmapId, queryClient, selectedNodeId]);
+
+  const confirmDeleteMindmap = useCallback(async () => {
+    if (deleteMindmapInFlight.current || !detail.data) return;
+    deleteMindmapInFlight.current = true;
+    try {
+      await deleteMindmap.mutateAsync({
+        id: mindmapId,
+        expectedNodeCount: detail.data.nodes.length,
+      });
+      router.replace("/");
+    } catch {
+      // The confirmation dialog keeps the actionable error visible.
+    } finally {
+      deleteMindmapInFlight.current = false;
+    }
+  }, [deleteMindmap, detail.data, mindmapId, router]);
 
   if (detail.isPending && !detail.data) return <EditorLoadingState />;
   if (!detail.data) {
@@ -644,42 +722,42 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         onRetrySave={saveCoordinator.retryAll}
         onBeforeNavigate={() => markdownAutosave.flushAll()}
         onExport={openHeaderExport}
+        renamePending={renameMindmap.isPending}
+        renameError={renameMindmap.isError ? renameMindmap.error.message : null}
+        onRename={async (title) => {
+          await renameMindmap.mutateAsync({ id: mindmapId, title });
+        }}
+        onDelete={() => {
+          deleteMindmap.reset();
+          setDeleteMindmapOpen(true);
+        }}
       />
       <MindmapCanvas
-        detail={{ ...detail.data, nodes: visibleNodes }}
+        detail={visibleDetail ?? detail.data}
         selectedNodeId={selectedNodeId}
-        onSelectNode={(nodeId) => {
-          if (nodeId) openNodeDetail(nodeId);
-          else {
-            setSelectedNodeId(null);
-            closeNodeDetail();
-          }
-        }}
+        onSelectNode={selectCanvasNode}
         onOpenDetail={openNodeDetail}
         editingNodeId={editingNodeId}
-        editDraft={editDraft}
         editError={editError}
-        savingNodeId={savingNodeId}
-        creatingParentId={creatingParentId}
-        childCreateError={childCreateError}
+        savingNodeIds={savingNodeIds}
+        creatingNodeIds={creatingNodeIds}
+        creationErrors={creationErrors}
         pendingNodeIds={pendingNodeIds}
         parentNodeIds={parentNodeIds}
         mutationErrors={mutationErrors}
-        onAddChild={(nodeId) => void addChild(nodeId)}
+        onAddChild={addChild}
         onCancelEdit={cancelEdit}
-        onChangeDraft={(value) => {
-          setEditDraft(value);
-          setEditError(null);
-        }}
-        onCommitEdit={() => void commitEdit()}
+        onCommitEdit={commitEdit}
         onStartEdit={startEdit}
         onToggleCollapse={toggleCollapse}
         onDelete={openDeleteNode}
         onExport={openNodeExport}
         onRetryMutation={retryNodeMutation}
         onRevertMutation={revertNodeMutation}
+        onRetryCreate={retryCreate}
+        onDiscardCreate={discardOptimisticNode}
         onNodesChange={changeNodePositions}
-        onNodeDragStop={(nodeId, position) => void persistPosition(nodeId, position)}
+        onNodeDragStop={persistPosition}
       />
       {detailPanelOpen && selectedNodeId ? (
         <NodeDetailPanel
@@ -693,6 +771,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
           fullscreenButtonRef={fullscreenButtonRef}
           saveRecord={saveCoordinator.getRecord(selectedNodeId, "content")}
           onRetrySave={() => saveCoordinator.retry(selectedNodeId, "content")}
+          onSave={() => void markdownAutosave.flush(selectedNodeId)}
           recovery={markdownAutosave.recovery}
           onApplyRecovery={() => markdownAutosave.applyRecovery(selectedNodeId)}
           onDiscardRecovery={() => markdownAutosave.discardRecovery(selectedNodeId)}
@@ -709,12 +788,25 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
           onClose={closeFullscreen}
           saveRecord={saveCoordinator.getRecord(selectedNodeId, "content")}
           onRetrySave={() => saveCoordinator.retry(selectedNodeId, "content")}
+          onSave={() => void markdownAutosave.flush(selectedNodeId)}
           recovery={markdownAutosave.recovery}
           onApplyRecovery={() => markdownAutosave.applyRecovery(selectedNodeId)}
           onDiscardRecovery={() => markdownAutosave.discardRecovery(selectedNodeId)}
           storageWarning={markdownAutosave.storageWarning}
         />
       ) : null}
+      <DeleteConfirmModal
+        open={deleteMindmapOpen}
+        title={`'${detail.data.mindmap.title}' 마인드맵을 삭제하시겠습니까?`}
+        description={`마인드맵과 포함된 노드 ${detail.data.nodes.length}개가 모두 삭제됩니다.`}
+        pending={deleteMindmap.isPending}
+        error={deleteMindmap.isError ? deleteMindmap.error.message || "마인드맵을 삭제하지 못했습니다." : null}
+        onOpenChange={(open) => {
+          setDeleteMindmapOpen(open);
+          if (!open) deleteMindmap.reset();
+        }}
+        onConfirm={() => void confirmDeleteMindmap()}
+      />
       <DeleteConfirmModal
         open={deleteTargetNodeId !== null}
         title={`'${deletionImpact.data?.node.title ?? "노드"}' 노드를 삭제하시겠습니까?`}
@@ -766,6 +858,10 @@ function EditorHeader({
   onRetrySave,
   onBeforeNavigate,
   onExport,
+  renamePending,
+  renameError,
+  onRename,
+  onDelete,
 }: {
   title: string;
   refreshFailed: boolean;
@@ -774,12 +870,95 @@ function EditorHeader({
   onRetrySave: () => void;
   onBeforeNavigate: () => void;
   onExport: () => void;
+  renamePending: boolean;
+  renameError: string | null;
+  onRename: (title: string) => Promise<void>;
+  onDelete: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const cancelOnBlur = useRef(false);
+  const renameInFlight = useRef(false);
+
+  async function commitRename() {
+    if (renameInFlight.current) return;
+    if (cancelOnBlur.current) {
+      cancelOnBlur.current = false;
+      return;
+    }
+    const normalized = draft.trim();
+    if (!normalized) {
+      setLocalError("마인드맵 제목을 입력해 주세요.");
+      return;
+    }
+    if (normalized === title) {
+      setEditing(false);
+      setLocalError(null);
+      return;
+    }
+    renameInFlight.current = true;
+    try {
+      await onRename(normalized);
+      setEditing(false);
+      setLocalError(null);
+    } catch {
+      // The mutation error is rendered next to the input and the draft is preserved.
+    } finally {
+      renameInFlight.current = false;
+    }
+  }
+
   return (
     <header className="z-10 border-b border-[var(--border)] bg-white">
       <div className="flex min-h-[4.5rem] items-center gap-4 px-4 sm:px-6">
         <Link href="/" onClick={onBeforeNavigate} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:border-[var(--primary)] hover:text-[var(--primary)]">← Dashboard</Link>
-        <h1 className="min-w-0 flex-1 truncate text-lg font-extrabold">{title}</h1>
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              autoFocus
+              aria-label="마인드맵 제목"
+              value={draft}
+              readOnly={renamePending}
+              maxLength={200}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                setLocalError(null);
+              }}
+              onBlur={() => void commitRename()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  cancelOnBlur.current = true;
+                  setDraft(title);
+                  setEditing(false);
+                  setLocalError(null);
+                }
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void commitRename();
+                }
+              }}
+              className="w-full rounded-lg border border-[var(--primary)] px-3 py-2 text-lg font-extrabold outline-none"
+            />
+          ) : (
+            <h1 className="truncate text-lg font-extrabold">{title}</h1>
+          )}
+          {localError || renameError ? <p role="alert" className="mt-1 text-xs font-bold text-[var(--danger)]">{localError ?? renameError}</p> : null}
+        </div>
+        {!editing ? (
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(title);
+              setLocalError(null);
+              setEditing(true);
+            }}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:border-[var(--primary)]"
+          >
+            제목 수정
+          </button>
+        ) : null}
+        <button type="button" onClick={onDelete} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-bold text-[var(--danger)] hover:bg-red-50">삭제</button>
         <SaveStatus record={saveRecord} onRetry={onRetrySave} />
         {refreshFailed ? (
           <button type="button" onClick={onRetry} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-[var(--danger)]">새로고침 실패 · 다시 시도</button>
@@ -792,23 +971,21 @@ function EditorHeader({
   );
 }
 
-function MindmapCanvas({
+const MindmapCanvas = memo(function MindmapCanvas({
   detail,
   selectedNodeId,
   onSelectNode,
   onOpenDetail,
   editingNodeId,
-  editDraft,
   editError,
-  savingNodeId,
-  creatingParentId,
-  childCreateError,
+  savingNodeIds,
+  creatingNodeIds,
+  creationErrors,
   pendingNodeIds,
   parentNodeIds,
   mutationErrors,
   onAddChild,
   onCancelEdit,
-  onChangeDraft,
   onCommitEdit,
   onStartEdit,
   onToggleCollapse,
@@ -816,6 +993,8 @@ function MindmapCanvas({
   onExport,
   onRetryMutation,
   onRevertMutation,
+  onRetryCreate,
+  onDiscardCreate,
   onNodesChange,
   onNodeDragStop,
 }: {
@@ -824,42 +1003,41 @@ function MindmapCanvas({
   onSelectNode: (nodeId: string | null) => void;
   onOpenDetail: (nodeId: string) => void;
   editingNodeId: string | null;
-  editDraft: string;
   editError: string | null;
-  savingNodeId: string | null;
-  creatingParentId: string | null;
-  childCreateError: { parentNodeId: string; message: string } | null;
+  savingNodeIds: ReadonlySet<string>;
+  creatingNodeIds: ReadonlySet<string>;
+  creationErrors: Readonly<Record<string, string>>;
   pendingNodeIds: ReadonlySet<string>;
   parentNodeIds: ReadonlySet<string>;
   mutationErrors: Readonly<Record<string, { kind: "position" | "collapse"; message: string }>>;
   onAddChild: (nodeId: string) => void;
   onCancelEdit: () => void;
-  onChangeDraft: (value: string) => void;
-  onCommitEdit: () => void;
+  onCommitEdit: (nodeId: string, title: string) => void;
   onStartEdit: (nodeId: string) => void;
   onToggleCollapse: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onExport: (nodeId: string) => void;
   onRetryMutation: (nodeId: string) => void;
   onRevertMutation: (nodeId: string) => void;
+  onRetryCreate: (nodeId: string) => void;
+  onDiscardCreate: (nodeId: string) => void;
   onNodesChange: (changes: NodeChange<MindmapFlowNode>[]) => void;
   onNodeDragStop: (nodeId: string, position: NodePosition) => void;
 }) {
   const flow = useMemo(
     () => toMindmapFlow(detail, selectedNodeId, {
       editingNodeId,
-      editDraft,
       editError,
-      savingNodeId,
-      creatingParentId,
-      childCreateError,
+      savingNodeIds,
+      creatingNodeIds,
+      childCreateError: null,
+      creationErrors,
       pendingNodeIds,
       nodesWithChildren: parentNodeIds,
       mutationErrors,
       onAddChild,
       onOpenDetail,
       onCancelEdit,
-      onChangeDraft,
       onCommitEdit,
       onStartEdit,
       onToggleCollapse,
@@ -867,9 +1045,11 @@ function MindmapCanvas({
       onExport,
       onRetryMutation,
       onRevertMutation,
+      onRetryCreate,
+      onDiscardCreate,
     }),
     [
-      childCreateError,
+      creationErrors,
       mutationErrors,
       onRetryMutation,
       onRevertMutation,
@@ -878,18 +1058,18 @@ function MindmapCanvas({
       onExport,
       parentNodeIds,
       pendingNodeIds,
-      creatingParentId,
+      creatingNodeIds,
       detail,
-      editDraft,
       editError,
       editingNodeId,
       onAddChild,
       onOpenDetail,
       onCancelEdit,
-      onChangeDraft,
       onCommitEdit,
       onStartEdit,
-      savingNodeId,
+      onRetryCreate,
+      onDiscardCreate,
+      savingNodeIds,
       selectedNodeId,
     ],
   );
@@ -934,7 +1114,7 @@ function MindmapCanvas({
       </ReactFlow>
     </section>
   );
-}
+});
 
 function CanvasToolbar() {
   const { zoomIn, zoomOut, fitView } = useReactFlow<MindmapFlowNode, MindmapFlowEdge>();
@@ -973,4 +1153,14 @@ function omitNodeKeys<T>(
   return Object.fromEntries(
     Object.entries(record).filter(([nodeId]) => !nodeIds.has(nodeId)),
   );
+}
+
+function omitKey<T>(
+  record: Readonly<Record<string, T>>,
+  key: string,
+): Readonly<Record<string, T>> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
 }

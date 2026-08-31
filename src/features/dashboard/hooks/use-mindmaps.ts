@@ -28,10 +28,11 @@ export function useCreateMindmap() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: createMindmap,
-    onSuccess: ({ mindmap }) => {
+    onSuccess: ({ mindmap, detail }) => {
       queryClient.setQueryData<MindmapListResponse>(mindmapQueryKey, (current) => ({
-        mindmaps: [mindmap, ...(current?.mindmaps ?? [])],
+        mindmaps: [mindmap, ...(current?.mindmaps ?? []).filter((item) => item.id !== mindmap.id)],
       }));
+      queryClient.setQueryData(mindmapDetailQueryKey(mindmap.id), detail);
     },
   });
 }
@@ -44,16 +45,23 @@ export function useRenameMindmap() {
     onMutate: async ({ id, title }) => {
       await queryClient.cancelQueries({ queryKey: mindmapQueryKey });
       const previous = queryClient.getQueryData<MindmapListResponse>(mindmapQueryKey);
+      const previousDetail = queryClient.getQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(id));
       queryClient.setQueryData<MindmapListResponse>(mindmapQueryKey, (current) => ({
         mindmaps: (current?.mindmaps ?? []).map((mindmap) =>
           mindmap.id === id ? { ...mindmap, title } : mindmap,
         ),
       }));
-      return { previous };
+      queryClient.setQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(id), (current) => current
+        ? { ...current, mindmap: { ...current.mindmap, title } }
+        : current);
+      return { previous, previousDetail };
     },
     onError: (_error, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(mindmapQueryKey, context.previous);
+      }
+      if (context?.previousDetail) {
+        queryClient.setQueryData(mindmapDetailQueryKey(_variables.id), context.previousDetail);
       }
     },
     onSuccess: ({ mindmap }) => {
@@ -64,6 +72,16 @@ export function useRenameMindmap() {
           ),
         ),
       }));
+      queryClient.setQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(mindmap.id), (current) => current
+        ? {
+            ...current,
+            mindmap: {
+              ...current.mindmap,
+              title: mindmap.title,
+              updatedAt: mindmap.updatedAt,
+            },
+          }
+        : current);
     },
   });
 }

@@ -16,9 +16,9 @@ describe("OAuth provider configuration", () => {
   });
 
   it("builds a fixed callback URL from APP_BASE_URL", () => {
-    expect(getOAuthRedirectUri("kakao", {
+    expect(getOAuthRedirectUri("google", {
       APP_BASE_URL: "http://localhost:3000",
-    })).toBe("http://localhost:3000/api/auth/oauth/kakao/callback");
+    })).toBe("http://localhost:3000/api/auth/oauth/google/callback");
   });
 
   it("maps only known callback errors to user-safe messages", () => {

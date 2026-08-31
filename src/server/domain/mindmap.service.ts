@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/server/db/client";
 import type { DatabaseClient } from "@/server/db/types";
 
@@ -16,9 +17,18 @@ import { findUserById } from "./user.repository";
 
 const MAX_TRANSACTION_ATTEMPTS = 5;
 
+export type CreateMindmapIds = Readonly<{
+  mindmapId: string;
+  rootNodeId: string;
+}>;
+
 export type CreatedMindmap = Awaited<ReturnType<typeof createMindmapAttempt>>;
 
-async function createMindmapAttempt(client: PrismaClient, userId: string) {
+async function createMindmapAttempt(
+  client: PrismaClient,
+  userId: string,
+  ids: CreateMindmapIds,
+) {
   return client.$transaction(
     async (transaction) => {
       const aggregate = await transaction.mindmap.aggregate({
@@ -28,6 +38,7 @@ async function createMindmapAttempt(client: PrismaClient, userId: string) {
       const sequenceNo = (aggregate._max.sequenceNo ?? 0) + 1;
       const mindmap = await transaction.mindmap.create({
         data: {
+          id: ids.mindmapId,
           userId,
           sequenceNo,
           title: `새로운 마인드맵 ${sequenceNo}`,
@@ -35,6 +46,7 @@ async function createMindmapAttempt(client: PrismaClient, userId: string) {
       });
       const rootNode = await transaction.node.create({
         data: {
+          id: ids.rootNodeId,
           mindmapId: mindmap.id,
           title: "시작",
           x: 0,
@@ -55,16 +67,28 @@ function waitBeforeRetry(attempt: number): Promise<void> {
 
 export async function createMindmapWithRoot(
   userId: string,
-  client: PrismaClient = prisma,
+  idsOrClient: CreateMindmapIds | PrismaClient = prisma,
+  providedClient: PrismaClient = prisma,
 ): Promise<CreatedMindmap> {
+  const ids = isCreateMindmapIds(idsOrClient)
+    ? idsOrClient
+    : { mindmapId: randomUUID(), rootNodeId: randomUUID() };
+  const client = isCreateMindmapIds(idsOrClient) ? providedClient : idsOrClient;
   if (!(await findUserById(userId, client))) {
     throw new DomainError("NOT_FOUND", "User was not found.");
   }
 
+  const existing = await findIdempotentMindmap(ids, userId, client);
+  if (existing) return existing;
+
   for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await createMindmapAttempt(client, userId);
+      return await createMindmapAttempt(client, userId, ids);
     } catch (error) {
+      if (isPrismaError(error, "P2002")) {
+        const concurrent = await findIdempotentMindmap(ids, userId, client);
+        if (concurrent) return concurrent;
+      }
       const retryable = isPrismaError(error, "P2034") || isPrismaError(error, "P2002");
 
       if (!retryable) {
@@ -84,6 +108,31 @@ export async function createMindmapWithRoot(
   }
 
   throw new DomainError("CONFLICT", "Mindmap creation failed.");
+}
+
+function isCreateMindmapIds(value: CreateMindmapIds | PrismaClient): value is CreateMindmapIds {
+  return "mindmapId" in value && "rootNodeId" in value;
+}
+
+async function findIdempotentMindmap(
+  ids: CreateMindmapIds,
+  userId: string,
+  client: PrismaClient,
+): Promise<CreatedMindmap | null> {
+  const mindmap = await client.mindmap.findUnique({ where: { id: ids.mindmapId } });
+  if (!mindmap) return null;
+  if (mindmap.userId !== userId) {
+    throw new DomainError("CONFLICT", "Mindmap id is already in use.");
+  }
+  const rootNode = await client.node.findUnique({ where: { id: ids.rootNodeId } });
+  if (
+    !rootNode ||
+    rootNode.mindmapId !== mindmap.id ||
+    rootNode.parentNodeId !== null
+  ) {
+    throw new DomainError("CONFLICT", "Root node id does not match the existing mindmap.");
+  }
+  return { mindmap, rootNode };
 }
 
 export function listMindmapsWithNodeCount(

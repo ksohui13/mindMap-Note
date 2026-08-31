@@ -2,7 +2,7 @@
 
 개인 지식을 마인드맵으로 구조화하고 각 node에 Markdown 상세 내용을 기록하는 웹앱 MVP입니다. 실행 계획과 단계 상태는 `docs/MASTER_PLAN.md`에서 관리합니다.
 
-Docker 없이 실행하는 방법, 로컬·외부 DB 선택, production mode, 테스트 환경과 문제 해결은 [실행·환경 운영자 매뉴얼](docs/OPERATOR_MANUAL.md)을 참고하세요.
+서비스의 실제 사용 방법은 [사용자 매뉴얼](docs/USER_MANUAL.md)을, Docker 없이 실행하는 방법, 로컬·외부 DB 선택, production mode, 테스트 환경과 문제 해결은 [실행·환경 운영자 매뉴얼](docs/OPERATOR_MANUAL.md)을 참고하세요.
 
 ## 요구 환경
 

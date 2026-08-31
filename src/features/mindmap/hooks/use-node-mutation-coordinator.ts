@@ -131,6 +131,12 @@ export function useNodeMutationCoordinator(
     setRecord(nodeId, kind, idleSaveRecord);
   }, [setRecord, supersede]);
 
+  const registerRevision = useCallback((nodeId: string, revision: number) => {
+    if (!Number.isInteger(revision) || revision < 0) return;
+    revisions.current.set(nodeId, revision);
+    forgottenNodes.current.delete(nodeId);
+  }, []);
+
   const getRecord = useCallback((nodeId: string, kind: SaveKind) =>
     records[saveRecordKey(nodeId, kind)] ?? idleSaveRecord, [records]);
 
@@ -182,6 +188,7 @@ export function useNodeMutationCoordinator(
     run,
     markDirty,
     markIdle,
+    registerRevision,
     getRecord,
     getCurrentRecord,
     waitForNodes,

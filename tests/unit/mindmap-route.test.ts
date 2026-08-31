@@ -96,12 +96,18 @@ describe("mindmap collection route", () => {
         updatedAt,
       },
     });
-    const response = await POST(request("/api/mindmaps", "POST"));
+    const response = await POST(request("/api/mindmaps", "POST", { mindmapId, rootNodeId }));
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({
       mindmap: { id: mindmapId, nodeCount: 1 },
       rootNodeId,
+      detail: {
+        mindmap: { id: mindmapId },
+        rootNodeId,
+        nodes: [{ id: rootNodeId }],
+      },
     });
+    expect(createMindmapWithRoot).toHaveBeenCalledWith(userId, { mindmapId, rootNodeId });
   });
 });
 

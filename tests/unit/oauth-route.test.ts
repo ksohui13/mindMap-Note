@@ -67,17 +67,29 @@ describe("OAuth routes", () => {
       new AuthError("OAUTH_STATE_INVALID", "internal state detail"),
     );
     const request = new NextRequest(
-      "http://localhost:3000/api/auth/oauth/kakao/callback?state=bad",
+      "http://localhost:3000/api/auth/oauth/google/callback?state=bad",
       { headers: { cookie: "mindmap_oauth_state=other" } },
     );
     const response = await callbackRoute(request, {
-      params: Promise.resolve({ provider: "kakao" }),
+      params: Promise.resolve({ provider: "google" }),
     });
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/login?oauthError=OAUTH_STATE_INVALID",
     );
     expect(response.headers.getSetCookie().join(";")).toContain("Max-Age=0");
+  });
+
+  it("rejects unsupported OAuth providers before starting authorization", async () => {
+    const response = await startRoute(
+      new NextRequest("http://localhost:3000/api/auth/oauth/kakao/start"),
+      { params: Promise.resolve({ provider: "kakao" }) },
+    );
+
+    expect(beginOAuthMock).not.toHaveBeenCalled();
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?oauthError=OAUTH_PROVIDER_REJECTED",
+    );
   });
 });
 

@@ -11,3 +11,11 @@ src/generated/prisma/
 *.log
 .DS_Store
 Thumbs.db
+
+# Private documents
+docs/99._no_share/
+
+# User test recordings
+user_test/mp4/
+
+env

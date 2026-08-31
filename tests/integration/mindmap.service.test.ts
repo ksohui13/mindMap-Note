@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { createMindmapWithRoot, deleteMindmapForUser } from "@/server/domain/mindmap.service";
 import { createChildNode } from "@/server/domain/node.service";
@@ -20,6 +21,22 @@ describe("createMindmapWithRoot", () => {
       sequenceNo: 1,
     });
     expect(created.rootNode).toMatchObject({ title: "시작", parentNodeId: null });
+  });
+
+  it("returns the same aggregate for a repeated client UUID and rejects UUID reuse", async () => {
+    const owner = await createTestUser("idempotent-map-owner@example.test");
+    const stranger = await createTestUser("idempotent-map-stranger@example.test");
+    const ids = { mindmapId: randomUUID(), rootNodeId: randomUUID() };
+
+    const first = await createMindmapWithRoot(owner.id, ids, integrationClient);
+    const retried = await createMindmapWithRoot(owner.id, ids, integrationClient);
+
+    expect(retried.mindmap.id).toBe(first.mindmap.id);
+    expect(retried.rootNode.id).toBe(first.rootNode.id);
+    expect(await integrationClient.mindmap.count({ where: { id: ids.mindmapId } })).toBe(1);
+    await expect(
+      createMindmapWithRoot(stranger.id, ids, integrationClient),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("rolls back a transaction when the second root violates the partial index", async () => {

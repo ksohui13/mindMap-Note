@@ -91,8 +91,6 @@ NEXT_PUBLIC_APP_NAME=Mindmap
 APP_BASE_URL=http://localhost:3000
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-KAKAO_CLIENT_ID=
-KAKAO_CLIENT_SECRET=
 ```
 
 ## 3. 정말 가볍게 화면만 확인하기 — DB 없음
@@ -401,23 +399,14 @@ npm run dev
 
 로컬 PostgreSQL 서비스는 필요에 따라 별도로 시작·종료합니다. 외부 DB라면 별도 로컬 DB 시작 과정은 없습니다.
 
-## 14. Google·Kakao 소셜 로그인 설정
+## 14. Google 소셜 로그인 설정
 
 OAuth 키가 없으면 소셜 로그인 버튼은 숨겨지며 기존 이메일 로그인은 그대로 동작합니다. 로컬 OAuth를 사용할 때 브라우저 주소와 `APP_BASE_URL`은 반드시 `http://localhost:3000`으로 통일하고 `127.0.0.1`과 혼용하지 않습니다.
-
-### Google
 
 1. Google Cloud Console에서 OAuth 2.0 Web application client를 생성합니다.
 2. Authorized redirect URI에 `http://localhost:3000/api/auth/oauth/google/callback`을 정확히 등록합니다.
 3. `.env`의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`을 채웁니다.
 4. 앱은 로그인 목적의 `openid email` scope만 요청하며 Gmail 메일함 권한은 요청하지 않습니다.
-
-### Kakao
-
-1. Kakao Developers에서 애플리케이션을 만들고 Kakao 로그인을 활성화합니다.
-2. OpenID Connect를 활성화하고 동의항목의 `account_email`을 사용할 수 있게 설정합니다.
-3. REST API key의 redirect URI에 `http://localhost:3000/api/auth/oauth/kakao/callback`을 정확히 등록합니다.
-4. `.env`의 `KAKAO_CLIENT_ID`에는 REST API key를, `KAKAO_CLIENT_SECRET`에는 client secret을 입력합니다.
 
 ID와 secret 중 하나만 입력하면 안전하지 않은 부분 설정으로 판단해 환경 검증 오류가 발생합니다. 값을 변경한 뒤에는 개발 서버를 다시 시작합니다. 현재 실연동 검증 상태와 후속 인증 기능은 `docs/AUTH_BACKLOG.md`에서 추적합니다.
 

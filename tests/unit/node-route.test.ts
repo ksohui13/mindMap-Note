@@ -199,6 +199,7 @@ describe("node creation route", () => {
       mindmapUpdatedAt: updatedAt,
     });
     const response = await POST(request(`/api/mindmaps/${mindmapId}/nodes`, "POST", {
+      id: nodeId,
       parentNodeId,
       title: " 새 노드 ",
       x: 240,
@@ -219,6 +220,7 @@ describe("node creation route", () => {
       mindmapUpdatedAt: updatedAt.toISOString(),
     });
     expect(createChildNodeForUser).toHaveBeenCalledWith({
+      id: nodeId,
       mindmapId,
       parentNodeId,
       title: "새 노드",
@@ -251,6 +253,7 @@ describe("node creation route", () => {
       new DomainError("NOT_FOUND", "Mindmap was not found."),
     );
     const response = await POST(request(`/api/mindmaps/${mindmapId}/nodes`, "POST", {
+      id: nodeId,
       parentNodeId,
       title: "child",
       x: 0,

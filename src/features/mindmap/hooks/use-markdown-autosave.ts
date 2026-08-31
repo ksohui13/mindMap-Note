@@ -34,6 +34,7 @@ export function useMarkdownAutosave({
 }) {
   const queryClient = useQueryClient();
   const contentMutation = useUpdateNodeContent(mindmapId);
+  const updateContent = contentMutation.mutateAsync;
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [recoveries, setRecoveries] = useState<Readonly<Record<string, DraftJournalEntry>>>({});
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
@@ -47,6 +48,14 @@ export function useMarkdownAutosave({
   const flushRef = useRef<(nodeId: string, options?: FlushOptions) => Promise<void>>(
     () => Promise.resolve(),
   );
+  const {
+    forgetNodes,
+    getCurrentRecord,
+    markDirty,
+    markIdle,
+    run,
+    waitForNodes,
+  } = coordinator;
 
   const clearTimer = useCallback((nodeId: string) => {
     const timer = timers.current.get(nodeId);
@@ -69,7 +78,7 @@ export function useMarkdownAutosave({
     setDrafts((current) => ({ ...current, [nodeId]: value }));
     draftsRef.current = { ...draftsRef.current, [nodeId]: value };
     lastEditedAt.current.set(nodeId, Date.now());
-    coordinator.markDirty(nodeId, "content");
+    markDirty(nodeId, "content");
 
     const result = writeDraftJournal(
       getBrowserStorage(),
@@ -77,7 +86,7 @@ export function useMarkdownAutosave({
     );
     setStorageWarning(result.ok ? null : result.error);
     schedule(nodeId);
-  }, [coordinator, mindmapId, queryClient, schedule]);
+  }, [markDirty, mindmapId, queryClient, schedule]);
 
   const flush = useCallback(async (nodeId: string, options: FlushOptions = {}) => {
     clearTimer(nodeId);
@@ -90,7 +99,7 @@ export function useMarkdownAutosave({
       removeDraftJournal(getBrowserStorage(), mindmapId, nodeId);
       setDrafts((current) => omitKey(current, nodeId));
       draftsRef.current = omitKey(draftsRef.current, nodeId);
-      coordinator.markIdle(nodeId, "content");
+      markIdle(nodeId, "content");
       return;
     }
     if (inFlight.current.has(nodeId)) {
@@ -101,10 +110,10 @@ export function useMarkdownAutosave({
     const submitted = draft;
     inFlight.current.add(nodeId);
     try {
-      await coordinator.run(
+      await run(
         nodeId,
         "content",
-        (revision) => contentMutation.mutateAsync({
+        (revision) => updateContent({
           nodeId,
           input: { contentMd: submitted, revision },
           keepalive: options.keepalive,
@@ -112,7 +121,7 @@ export function useMarkdownAutosave({
         {
           onSuccess: () => {
             if (draftsRef.current[nodeId] !== submitted) {
-              coordinator.markDirty(nodeId, "content");
+              markDirty(nodeId, "content");
               return;
             }
             if (!options.keepalive) {
@@ -152,7 +161,7 @@ export function useMarkdownAutosave({
         }
       }
     }
-  }, [clearTimer, contentMutation, coordinator, mindmapId, queryClient, schedule]);
+  }, [clearTimer, markDirty, markIdle, mindmapId, queryClient, run, schedule, updateContent]);
 
   useEffect(() => {
     flushRef.current = flush;
@@ -207,9 +216,9 @@ export function useMarkdownAutosave({
     setDrafts((current) => ({ ...current, [nodeId]: journal.contentMd }));
     draftsRef.current = { ...draftsRef.current, [nodeId]: journal.contentMd };
     lastEditedAt.current.set(nodeId, Date.now());
-    coordinator.markDirty(nodeId, "content");
+    markDirty(nodeId, "content");
     schedule(nodeId);
-  }, [coordinator, schedule]);
+  }, [markDirty, schedule]);
 
   const discardRecovery = useCallback((nodeId: string) => {
     removeDraftJournal(getBrowserStorage(), mindmapId, nodeId);
@@ -217,8 +226,8 @@ export function useMarkdownAutosave({
     recoveriesRef.current = omitKey(recoveriesRef.current, nodeId);
     setDrafts((current) => omitKey(current, nodeId));
     draftsRef.current = omitKey(draftsRef.current, nodeId);
-    coordinator.markIdle(nodeId, "content");
-  }, [coordinator, mindmapId]);
+    markIdle(nodeId, "content");
+  }, [markIdle, mindmapId]);
 
   const pauseNodes = useCallback((nodeIds: readonly string[]) => {
     for (const nodeId of nodeIds) {
@@ -254,8 +263,8 @@ export function useMarkdownAutosave({
     draftsRef.current = omitKeys(draftsRef.current, removed);
     setRecoveries((current) => omitKeys(current, removed));
     recoveriesRef.current = omitKeys(recoveriesRef.current, removed);
-    coordinator.forgetNodes(nodeIds);
-  }, [clearTimer, coordinator, mindmapId, queryClient]);
+    forgetNodes(nodeIds);
+  }, [clearTimer, forgetNodes, mindmapId, queryClient]);
 
   const prepareExport = useCallback(async (
     nodeIds: readonly string[],
@@ -266,8 +275,8 @@ export function useMarkdownAutosave({
         return { ok: false, message: "복구할 로컬 초안을 먼저 적용하거나 서버본을 선택해 주세요." };
       }
       if (
-        coordinator.getCurrentRecord(nodeId, "title").phase === "failed" ||
-        coordinator.getCurrentRecord(nodeId, "content").phase === "failed"
+        getCurrentRecord(nodeId, "title").phase === "failed" ||
+        getCurrentRecord(nodeId, "content").phase === "failed"
       ) {
         return { ok: false, message: "저장 실패를 해결한 뒤 다시 내보내 주세요." };
       }
@@ -275,19 +284,19 @@ export function useMarkdownAutosave({
     }
 
     await Promise.all(targets.map((nodeId) => flushRef.current(nodeId)));
-    await coordinator.waitForNodes(targets);
+    await waitForNodes(targets);
 
     for (const nodeId of targets) {
       if (
-        coordinator.getCurrentRecord(nodeId, "title").phase === "failed" ||
-        coordinator.getCurrentRecord(nodeId, "content").phase === "failed" ||
+        getCurrentRecord(nodeId, "title").phase === "failed" ||
+        getCurrentRecord(nodeId, "content").phase === "failed" ||
         draftsRef.current[nodeId] !== undefined
       ) {
         return { ok: false, message: "대상 노드의 최신 내용을 저장하지 못했습니다. 저장을 재시도해 주세요." };
       }
     }
     return { ok: true };
-  }, [clearTimer, coordinator]);
+  }, [clearTimer, getCurrentRecord, waitForNodes]);
 
   return {
     drafts,

@@ -1,15 +1,18 @@
 "use client";
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { memo, useEffect, useRef } from "react";
 
 import type { MindmapFlowNode } from "@/features/mindmap/model/flow-adapter";
 
 export const MindmapNode = memo(function MindmapNode({ id, data, selected }: NodeProps<MindmapFlowNode>) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cancelOnBlurRef = useRef(false);
 
   useEffect(() => {
     if (!data.isEditing) return;
+    cancelOnBlurRef.current = false;
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [data.isEditing]);
@@ -34,16 +37,20 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
           <input
             ref={inputRef}
             aria-label="노드 제목"
-            value={data.editDraft ?? ""}
+            defaultValue={data.title}
             readOnly={data.isSaving}
             aria-disabled={data.isSaving}
-            onChange={(event) => data.onChangeDraft?.(event.target.value)}
             onBlur={() => {
-              if (!data.isSaving) data.onCancelEdit?.();
+              if (cancelOnBlurRef.current) {
+                cancelOnBlurRef.current = false;
+                return;
+              }
+              if (!data.isSaving) data.onCommitEdit?.(id, inputRef.current?.value ?? "");
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
+                cancelOnBlurRef.current = true;
                 data.onCancelEdit?.();
                 return;
               }
@@ -53,7 +60,7 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
                 event.nativeEvent.keyCode !== 229
               ) {
                 event.preventDefault();
-                data.onCommitEdit?.();
+                data.onCommitEdit?.(id, event.currentTarget.value);
               }
             }}
             className={`nodrag nowheel w-full rounded-md border px-2 py-1 text-center text-sm font-extrabold outline-none focus:ring-2 ${
@@ -68,7 +75,7 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => data.onCommitEdit?.()}
+                onClick={() => data.onCommitEdit?.(id, inputRef.current?.value ?? "")}
                 className="ml-1 underline"
               >
                 다시 시도
@@ -126,37 +133,43 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
           {data.isCreatingChild ? "…" : "+"}
         </button>
         {data.onExport || !data.isRoot ? (
-          <details
-            className="relative"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <summary
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
               aria-label={`${data.title} 메뉴`}
+              onClick={(event) => event.stopPropagation()}
               className="grid size-7 cursor-pointer list-none place-items-center rounded-full bg-violet-100 text-sm font-black text-[var(--primary)] transition hover:bg-violet-200"
             >
               ⋯
-            </summary>
-            <div className="absolute right-0 z-20 mt-1 w-40 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-lg">
+            </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={4}
+              collisionPadding={8}
+              className="z-[80] w-40 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-xl"
+            >
               {data.onExport ? (
-                <button
-                  type="button"
-                  onClick={() => data.onExport?.(id)}
+                <DropdownMenu.Item
+                  onSelect={() => data.onExport?.(id)}
                   className="w-full rounded-md px-3 py-2 text-left text-xs font-bold hover:bg-[var(--background)]"
                 >
                   이 노드부터 내보내기
-                </button>
+                </DropdownMenu.Item>
               ) : null}
               {!data.isRoot ? (
-                <button
-                  type="button"
-                  onClick={() => data.onDelete?.(id)}
+                <DropdownMenu.Item
+                  onSelect={() => data.onDelete?.(id)}
                   className="w-full rounded-md px-3 py-2 text-left text-xs font-bold text-[var(--danger)] hover:bg-red-50"
                 >
                   삭제
-                </button>
+                </DropdownMenu.Item>
               ) : null}
-            </div>
-          </details>
+            </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         ) : null}
       </div>
       {data.childCreateError ? (
@@ -183,6 +196,15 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
             >
               서버 상태로 되돌리기
             </button>
+          </div>
+        </div>
+      ) : null}
+      {data.creationError ? (
+        <div role="alert" className="nodrag mt-1 text-[10px] font-bold text-[var(--danger)]">
+          <span>{data.creationError}</span>
+          <div className="mt-1 flex justify-center gap-2">
+            <button type="button" onClick={() => data.onRetryCreate?.(id)} className="underline">다시 시도</button>
+            <button type="button" onClick={() => data.onDiscardCreate?.(id)} className="underline">임시 노드 제거</button>
           </div>
         </div>
       ) : null}

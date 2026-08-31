@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { KeyboardEvent, useRef, useState } from "react";
 
 import { LogoutButton } from "@/features/auth/components/logout-button";
 import {
-  useCreateMindmap,
   useDeleteMindmap,
   useMindmaps,
   useRenameMindmap,
@@ -30,20 +30,14 @@ export function formatMindmapUpdatedAt(value: string) {
 export function DashboardScreen({ user }: { user: { email: string } }) {
   const router = useRouter();
   const mindmaps = useMindmaps();
-  const createMindmap = useCreateMindmap();
   const createInFlight = useRef(false);
 
-  async function handleCreate() {
+  function handleCreate() {
     if (createInFlight.current) return;
     createInFlight.current = true;
-    try {
-      const result = await createMindmap.mutateAsync();
-      router.push(`/mindmaps/${result.mindmap.id}?rootNodeId=${result.rootNodeId}&initialEdit=1`);
-    } catch {
-      // The mutation state renders the actionable error without an unhandled rejection.
-    } finally {
-      createInFlight.current = false;
-    }
+    const mindmapId = crypto.randomUUID();
+    const rootNodeId = crypto.randomUUID();
+    router.push(`/mindmaps/${mindmapId}?rootNodeId=${rootNodeId}&initialEdit=1&create=1`);
   }
 
   return (
@@ -75,17 +69,12 @@ export function DashboardScreen({ user }: { user: { email: string } }) {
           </div>
           <button
             type="button"
-            onClick={() => void handleCreate()}
-            disabled={createMindmap.isPending}
+            onClick={handleCreate}
             className="rounded-xl bg-[var(--primary)] px-5 py-3 font-bold text-white shadow-lg shadow-violet-200 transition hover:bg-[var(--primary-strong)] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {createMindmap.isPending ? "만드는 중..." : "+ 새 마인드맵"}
+            + 새 마인드맵
           </button>
         </div>
-
-        {createMindmap.isError ? (
-          <p role="alert" className="mt-4 text-sm text-[var(--danger)]">마인드맵을 만들지 못했습니다. 다시 시도해 주세요.</p>
-        ) : null}
 
         <div className="mt-9">
           {mindmaps.isPending ? <DashboardSkeleton /> : null}
@@ -96,7 +85,7 @@ export function DashboardScreen({ user }: { user: { email: string } }) {
           {mindmaps.isSuccess && mindmaps.data.mindmaps.length > 0 ? (
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {mindmaps.data.mindmaps.map((mindmap) => (
-                <MindmapCard key={mindmap.id} mindmap={mindmap} onOpen={() => router.push(`/mindmaps/${mindmap.id}`)} />
+                <MindmapCard key={mindmap.id} mindmap={mindmap} />
               ))}
             </div>
           ) : null}
@@ -138,7 +127,7 @@ function EmptyDashboard() {
   );
 }
 
-function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: () => void }) {
+function MindmapCard({ mindmap }: { mindmap: MindmapSummaryDTO }) {
   const renameMindmap = useRenameMindmap();
   const deleteMindmap = useDeleteMindmap();
   const [editing, setEditing] = useState(false);
@@ -216,14 +205,14 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
 
   return (
     <article className="group overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-card)]">
-      <button type="button" aria-label={`${mindmap.title} 열기`} onClick={onOpen} className="relative block h-36 w-full overflow-hidden bg-gradient-to-br from-violet-50 to-indigo-100 text-left">
+      <Link aria-label={`${mindmap.title} 열기`} href={`/mindmaps/${mindmap.id}`} className="relative block h-36 w-full overflow-hidden bg-gradient-to-br from-violet-50 to-indigo-100 text-left">
         <span className="absolute left-1/2 top-1/2 h-px w-24 -translate-x-1/2 bg-violet-300" />
         <span className="absolute left-[22%] top-[30%] h-px w-20 rotate-[28deg] bg-indigo-300" />
         <span className="absolute left-[58%] top-[68%] h-px w-20 -rotate-[22deg] bg-indigo-300" />
         <span className="absolute left-1/2 top-1/2 grid h-11 min-w-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-xl bg-[var(--primary)] px-3 text-xs font-bold text-white">시작</span>
         <span className="absolute left-[10%] top-[18%] rounded-lg border border-violet-200 bg-white px-3 py-2 text-[10px] text-[var(--muted)]">아이디어</span>
         <span className="absolute bottom-[12%] right-[8%] rounded-lg border border-indigo-200 bg-white px-3 py-2 text-[10px] text-[var(--muted)]">메모</span>
-      </button>
+      </Link>
       <div className="p-5">
         <div className="flex min-h-9 items-start justify-between gap-3">
           {editing ? (
@@ -238,7 +227,7 @@ function MindmapCard({ mindmap, onOpen }: { mindmap: MindmapSummaryDTO; onOpen: 
               className="min-w-0 flex-1 rounded-lg border border-[var(--primary)] px-2 py-1 font-bold"
             />
           ) : (
-            <button type="button" onClick={onOpen} className="min-w-0 flex-1 truncate text-left text-lg font-extrabold hover:text-[var(--primary)]">{mindmap.title}</button>
+            <Link href={`/mindmaps/${mindmap.id}`} className="min-w-0 flex-1 truncate text-left text-lg font-extrabold hover:text-[var(--primary)]">{mindmap.title}</Link>
           )}
           {!editing ? (
             <details className="relative">

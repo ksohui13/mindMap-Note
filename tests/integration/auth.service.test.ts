@@ -140,8 +140,8 @@ describe("authentication services", () => {
     );
     await expect(completeOAuthIdentity(
       {
-        provider: "kakao",
-        providerAccountId: "kakao-subject-1",
+        provider: "google",
+        providerAccountId: "google-subject-collision",
         email: "collision@example.test",
       },
       integrationClient,

@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import type { MindmapFlowNode } from "@/features/mindmap/model/flow-adapter";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
 type MockReactFlowProps = {
   nodes: MindmapFlowNode[];
   onNodesChange?: (changes: Array<{

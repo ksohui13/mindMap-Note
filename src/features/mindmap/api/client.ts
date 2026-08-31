@@ -1,6 +1,7 @@
 import type {
   CreateNodeInput,
   CreateNodeResponse,
+  CreateMindmapInput,
   CreateMindmapResponse,
   DeleteMindmapInput,
   DeleteMindmapResponse,
@@ -62,9 +63,15 @@ export async function fetchMindmaps(): Promise<MindmapListResponse> {
   return parseResponse(await fetch("/api/mindmaps", { cache: "no-store" }));
 }
 
-export async function createMindmap(): Promise<CreateMindmapResponse> {
+export async function createMindmap(
+  input: CreateMindmapInput,
+): Promise<CreateMindmapResponse> {
   return parseResponse(
-    await fetch("/api/mindmaps", { method: "POST" }),
+    await fetch("/api/mindmaps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   );
 }
 

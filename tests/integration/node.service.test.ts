@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { createMindmapWithRoot } from "@/server/domain/mindmap.service";
 import { countDescendants } from "@/server/domain/node.repository";
@@ -141,6 +142,31 @@ describe("node domain services", () => {
       2,
       integrationClient,
     )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("makes client-generated node UUID retries idempotent and rejects relation reuse", async () => {
+    const owner = await createTreeOwner("idempotent-node-owner@example.test");
+    const otherMap = await createMindmapWithRoot(owner.user.id, integrationClient);
+    const nodeId = randomUUID();
+    const input = {
+      id: nodeId,
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "한 번만 생성",
+      x: 240,
+      y: 0,
+    };
+
+    const first = await createChildNodeForUser(input, owner.user.id, integrationClient);
+    const retried = await createChildNodeForUser(input, owner.user.id, integrationClient);
+
+    expect(retried.node.id).toBe(first.node.id);
+    expect(await integrationClient.node.count({ where: { id: nodeId } })).toBe(1);
+    await expect(createChildNodeForUser({
+      ...input,
+      mindmapId: otherMap.mindmap.id,
+      parentNodeId: otherMap.rootNode.id,
+    }, owner.user.id, integrationClient)).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("reads and updates Markdown only for its owner and matching revision", async () => {

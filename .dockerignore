@@ -5,3 +5,10 @@ node_modules
 coverage
 playwright-report
 test-results
+
+# Local secrets
+docs/99._no_share/
+env
+
+# User test recordings
+user_test/mp4/

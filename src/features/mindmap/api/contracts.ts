@@ -12,6 +12,7 @@ export type MindmapListResponse = { mindmaps: MindmapSummaryDTO[] };
 export type CreateMindmapResponse = {
   mindmap: MindmapSummaryDTO;
   rootNodeId: string;
+  detail: MindmapDetailResponse;
 };
 export type UpdateMindmapResponse = { mindmap: MindmapSummaryDTO };
 export type DeleteMindmapResponse = Readonly<{
@@ -84,6 +85,11 @@ export const updateMindmapInputSchema = z.object({
 export const mindmapIdSchema = z.uuid("올바른 마인드맵 ID가 아닙니다.");
 export const nodeIdSchema = z.uuid("올바른 노드 ID가 아닙니다.");
 
+export const createMindmapInputSchema = z.object({
+  mindmapId: mindmapIdSchema,
+  rootNodeId: nodeIdSchema,
+}).strict();
+
 const nodeTitleSchema = z
   .string()
   .trim()
@@ -91,6 +97,7 @@ const nodeTitleSchema = z
   .max(200, "노드 제목은 200자 이하여야 합니다.");
 
 export const createNodeInputSchema = z.object({
+  id: nodeIdSchema,
   parentNodeId: nodeIdSchema,
   title: nodeTitleSchema,
   x: z.number().finite("노드의 x 좌표가 올바르지 않습니다."),
@@ -149,6 +156,7 @@ export const exportMindmapInputSchema = z.discriminatedUnion("scope", [
 ]);
 
 export type UpdateMindmapInput = z.infer<typeof updateMindmapInputSchema>;
+export type CreateMindmapInput = z.infer<typeof createMindmapInputSchema>;
 export type DeleteMindmapInput = z.infer<typeof deleteMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
 export type UpdateNodeTitleInput = z.infer<typeof updateNodeTitleInputSchema>;

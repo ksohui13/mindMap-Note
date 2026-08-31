@@ -1,4 +1,5 @@
 import { Prisma, type Node, type PrismaClient } from "@/generated/prisma/client";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/server/db/client";
 
 import { DomainError, isPrismaError, mapPrismaError } from "./errors";
@@ -7,6 +8,7 @@ import { countDescendants } from "./node.repository";
 import { lockMindmapForUser, touchMindmap } from "./mindmap.repository";
 
 export type CreateChildNodeInput = {
+  id?: string;
   mindmapId: string;
   parentNodeId: string;
   title: string;
@@ -32,6 +34,7 @@ export async function createChildNode(
   client: PrismaClient = prisma,
 ): Promise<Node> {
   assertFinitePosition(input.x, input.y);
+  const nodeId = input.id ?? randomUUID();
 
   try {
     return await client.$transaction(async (transaction) => {
@@ -52,6 +55,7 @@ export async function createChildNode(
 
       const node = await transaction.node.create({
         data: {
+          id: nodeId,
           mindmapId: input.mindmapId,
           parentNodeId: input.parentNodeId,
           title: normalizeTitle(input.title),
@@ -78,11 +82,27 @@ export async function createChildNodeForUser(
 ): Promise<CreateOwnedChildNodeResult> {
   assertFinitePosition(input.x, input.y);
   const title = normalizeTitle(input.title);
+  const nodeId = input.id ?? randomUUID();
 
   try {
     return await client.$transaction(async (transaction) => {
       if (!(await lockMindmapForUser(input.mindmapId, userId, transaction))) {
         throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+      }
+
+      const existing = await transaction.node.findUnique({ where: { id: nodeId } });
+      if (existing) {
+        if (
+          existing.mindmapId !== input.mindmapId ||
+          existing.parentNodeId !== input.parentNodeId
+        ) {
+          throw new DomainError("CONFLICT", "Node id is already in use.");
+        }
+        const currentMindmap = await transaction.mindmap.findUniqueOrThrow({
+          where: { id: input.mindmapId },
+          select: { updatedAt: true },
+        });
+        return { node: existing, mindmapUpdatedAt: currentMindmap.updatedAt };
       }
 
       const parent = await transaction.node.findUnique({
@@ -98,6 +118,7 @@ export async function createChildNodeForUser(
 
       const node = await transaction.node.create({
         data: {
+          id: nodeId,
           mindmapId: input.mindmapId,
           parentNodeId: input.parentNodeId,
           title,
@@ -115,6 +136,23 @@ export async function createChildNodeForUser(
     });
   } catch (error) {
     if (error instanceof DomainError) throw error;
+    if (isPrismaError(error, "P2002")) {
+      const concurrent = await client.node.findUnique({ where: { id: nodeId } });
+      if (concurrent) {
+        if (
+          concurrent.mindmapId !== input.mindmapId ||
+          concurrent.parentNodeId !== input.parentNodeId
+        ) {
+          throw new DomainError("CONFLICT", "Node id is already in use.");
+        }
+        const owner = await client.mindmap.findFirst({
+          where: { id: input.mindmapId, userId },
+          select: { updatedAt: true },
+        });
+        if (!owner) throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+        return { node: concurrent, mindmapUpdatedAt: owner.updatedAt };
+      }
+    }
     return mapPrismaError(error);
   }
 }

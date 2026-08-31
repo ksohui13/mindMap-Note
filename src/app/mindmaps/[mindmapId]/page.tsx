@@ -1,28 +1,38 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { MindmapEditor } from "@/features/mindmap/components/mindmap-editor";
+import { MindmapCreationPage } from "@/features/mindmap/components/mindmap-creation-page";
 import { mindmapIdSchema } from "@/features/mindmap/api/contracts";
-import { requireCurrentUser } from "@/server/auth/session";
+import { getCurrentUserWithMindmap, requireCurrentUser } from "@/server/auth/session";
 import { DomainError } from "@/server/domain/errors";
 import { toMindmapDetailDTO } from "@/server/domain/mindmap.dto";
-import { getMindmapDetailForUser } from "@/server/domain/mindmap.service";
+import type { MindmapDetailRecord } from "@/server/domain/mindmap.repository";
+import { validateMindmapTree } from "@/server/domain/mindmap-tree";
 
 type MindmapPageProps = {
   params: Promise<{ mindmapId: string }>;
-  searchParams: Promise<{ rootNodeId?: string; initialEdit?: string }>;
+  searchParams: Promise<{ rootNodeId?: string; initialEdit?: string; create?: string }>;
 };
 
 export default async function MindmapPage({ params, searchParams }: MindmapPageProps) {
-  const user = await requireCurrentUser();
   const { mindmapId } = await params;
   const parsedId = mindmapIdSchema.safeParse(mindmapId);
   if (!parsedId.success) notFound();
 
-  const result = await loadMindmapDetail(parsedId.data, user.id);
+  const query = await searchParams;
+  const parsedRootId = mindmapIdSchema.safeParse(query.rootNodeId);
+  if (query.create === "1" && parsedRootId.success) {
+    await requireCurrentUser();
+    return <MindmapCreationPage mindmapId={parsedId.data} rootNodeId={parsedRootId.data} />;
+  }
+
+  const sessionResult = await getCurrentUserWithMindmap(parsedId.data);
+  if (!sessionResult) redirect("/login");
+  if (!sessionResult.mindmap) notFound();
+  const result = loadSessionMindmapDetail(sessionResult.mindmap);
   if (result.kind === "integrity-error") return <EditorIntegrityError />;
 
-  const query = await searchParams;
   const initialRootSelection =
     query.initialEdit === "1" && query.rootNodeId === result.detail.rootNodeId;
   return (
@@ -34,14 +44,13 @@ export default async function MindmapPage({ params, searchParams }: MindmapPageP
   );
 }
 
-async function loadMindmapDetail(mindmapId: string, userId: string) {
+function loadSessionMindmapDetail(detail: MindmapDetailRecord) {
   try {
     return {
       kind: "success" as const,
-      detail: toMindmapDetailDTO(await getMindmapDetailForUser(mindmapId, userId)),
+      detail: toMindmapDetailDTO({ ...detail, rootNodeId: validateMindmapTree(detail.nodes) }),
     };
   } catch (error) {
-    if (error instanceof DomainError && error.code === "NOT_FOUND") notFound();
     if (error instanceof DomainError && error.code === "DATA_INTEGRITY") {
       return { kind: "integrity-error" as const };
     }

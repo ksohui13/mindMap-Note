@@ -16,24 +16,18 @@ const oauthEnvironmentShape = {
   }, "APP_BASE_URL must use http or https").default("http://localhost:3000"),
   GOOGLE_CLIENT_ID: optionalCredential,
   GOOGLE_CLIENT_SECRET: optionalCredential,
-  KAKAO_CLIENT_ID: optionalCredential,
-  KAKAO_CLIENT_SECRET: optionalCredential,
 };
 
 function validateOAuthCredentialPairs(
   environment: z.infer<z.ZodObject<typeof oauthEnvironmentShape>>,
   context: z.RefinementCtx,
 ) {
-  for (const provider of ["GOOGLE", "KAKAO"] as const) {
-    const clientId = environment[`${provider}_CLIENT_ID`];
-    const clientSecret = environment[`${provider}_CLIENT_SECRET`];
-    if (Boolean(clientId) !== Boolean(clientSecret)) {
-      context.addIssue({
-        code: "custom",
-        path: [`${provider}_CLIENT_ID`],
-        message: `${provider} OAuth client ID and secret must be configured together`,
-      });
-    }
+  if (Boolean(environment.GOOGLE_CLIENT_ID) !== Boolean(environment.GOOGLE_CLIENT_SECRET)) {
+    context.addIssue({
+      code: "custom",
+      path: ["GOOGLE_CLIENT_ID"],
+      message: "GOOGLE OAuth client ID and secret must be configured together",
+    });
   }
 }
 

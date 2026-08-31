@@ -8,7 +8,7 @@ import type { OAuthProvider } from "@/shared/auth/oauth";
 
 import { AuthError } from "./errors";
 
-export const oauthProviderSchema = z.enum(["google", "kakao"]);
+export const oauthProviderSchema = z.literal("google");
 export type { OAuthProvider } from "@/shared/auth/oauth";
 
 type ProviderSettings = Readonly<{
@@ -41,10 +41,7 @@ export function getEnabledOAuthProviders(
   environment: Record<string, string | undefined> = process.env,
 ): OAuthProvider[] {
   const parsed = parseOAuthEnv(environment);
-  return [
-    ...(parsed.GOOGLE_CLIENT_ID ? ["google" as const] : []),
-    ...(parsed.KAKAO_CLIENT_ID ? ["kakao" as const] : []),
-  ];
+  return parsed.GOOGLE_CLIENT_ID ? ["google"] : [];
 }
 
 export function getOAuthRedirectUri(
@@ -77,7 +74,6 @@ export async function buildOAuthAuthorizationUrl(
 export async function exchangeOAuthAuthorizationCode(
   input: OAuthCallbackInput,
   environment: Record<string, string | undefined> = process.env,
-  fetchImplementation: typeof fetch = fetch,
 ): Promise<OAuthIdentity> {
   const settings = getProviderSettings(input.provider, parseOAuthEnv(environment));
   const configuration = await getConfiguration(input.provider, settings);
@@ -96,59 +92,21 @@ export async function exchangeOAuthAuthorizationCode(
     const claims = tokens.claims();
     if (!claims) throw new Error("OIDC provider returned no ID token claims");
 
-    if (input.provider === "google") {
-      const parsed = z.object({
-        sub: z.string().min(1),
-        email: z.email(),
-        email_verified: z.literal(true),
-      }).safeParse(claims);
-      if (!parsed.success) {
-        throw new AuthError(
-          "OAUTH_EMAIL_REQUIRED",
-          "Google 계정에서 인증된 이메일을 확인할 수 없습니다.",
-        );
-      }
-      return {
-        provider: "google",
-        providerAccountId: parsed.data.sub,
-        email: parsed.data.email,
-      };
-    }
-
-    const subject = z.object({ sub: z.string().min(1) }).safeParse(claims);
-    if (!subject.success || !tokens.access_token) {
-      throw new AuthError(
-        "OAUTH_PROVIDER_REJECTED",
-        "카카오 로그인 정보를 확인하지 못했습니다.",
-      );
-    }
-    const profileResponse = await fetchImplementation(
-      "https://kapi.kakao.com/v2/user/me",
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } },
-    );
-    if (!profileResponse.ok) {
-      throw new AuthError(
-        "OAUTH_PROVIDER_REJECTED",
-        "카카오 로그인 정보를 확인하지 못했습니다.",
-      );
-    }
-    const profile = z.object({
-      kakao_account: z.object({
-        email: z.email(),
-        is_email_valid: z.literal(true),
-        is_email_verified: z.literal(true),
-      }),
-    }).safeParse(await profileResponse.json());
-    if (!profile.success) {
+    const parsed = z.object({
+      sub: z.string().min(1),
+      email: z.email(),
+      email_verified: z.literal(true),
+    }).safeParse(claims);
+    if (!parsed.success) {
       throw new AuthError(
         "OAUTH_EMAIL_REQUIRED",
-        "카카오 계정의 인증된 이메일 제공 동의가 필요합니다.",
+        "Google 계정에서 인증된 이메일을 확인할 수 없습니다.",
       );
     }
     return {
-      provider: "kakao",
-      providerAccountId: subject.data.sub,
-      email: profile.data.kakao_account.email,
+      provider: "google",
+      providerAccountId: parsed.data.sub,
+      email: parsed.data.email,
     };
   } catch (error) {
     if (error instanceof AuthError) throw error;
@@ -161,15 +119,11 @@ export async function exchangeOAuthAuthorizationCode(
 }
 
 function getProviderSettings(
-  provider: OAuthProvider,
+  _provider: OAuthProvider,
   environment: OAuthEnv,
 ): ProviderSettings {
-  const clientId = provider === "google"
-    ? environment.GOOGLE_CLIENT_ID
-    : environment.KAKAO_CLIENT_ID;
-  const clientSecret = provider === "google"
-    ? environment.GOOGLE_CLIENT_SECRET
-    : environment.KAKAO_CLIENT_SECRET;
+  const clientId = environment.GOOGLE_CLIENT_ID;
+  const clientSecret = environment.GOOGLE_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     throw new AuthError(
@@ -181,10 +135,8 @@ function getProviderSettings(
   return {
     clientId,
     clientSecret,
-    issuer: provider === "google"
-      ? "https://accounts.google.com"
-      : "https://kauth.kakao.com",
-    scope: provider === "google" ? "openid email" : "openid account_email",
+    issuer: "https://accounts.google.com",
+    scope: "openid email",
   };
 }
 

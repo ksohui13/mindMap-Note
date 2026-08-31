@@ -1,4 +1,4 @@
-export const OAUTH_PROVIDERS = ["google", "kakao"] as const;
+export const OAUTH_PROVIDERS = ["google"] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
 
 const OAUTH_ERROR_MESSAGES: Readonly<Record<string, string>> = {

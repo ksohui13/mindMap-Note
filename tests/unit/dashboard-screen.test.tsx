@@ -101,13 +101,11 @@ describe("DashboardScreen", () => {
   });
 
   it("prevents duplicate creation and opens the created mindmap", async () => {
-    let resolveCreate: ((response: Response) => void) | undefined;
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/mindmaps" && init?.method === "POST") {
-        return new Promise<Response>((resolve) => { resolveCreate = resolve; });
-      }
-      return Promise.resolve(jsonResponse({ mindmaps: [] }));
-    });
+    const rootNodeId = "197c9309-bb27-4d11-8071-c99b8728fc7b";
+    vi.spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(mindmap.id)
+      .mockReturnValueOnce(rootNodeId);
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ mindmaps: [] }));
     vi.stubGlobal("fetch", fetchMock);
     renderDashboard();
     await screen.findByText("첫 마인드맵을 만들어 보세요");
@@ -115,13 +113,11 @@ describe("DashboardScreen", () => {
     const createButton = screen.getByRole("button", { name: "+ 새 마인드맵" });
     fireEvent.click(createButton);
     fireEvent.click(createButton);
-    expect(await screen.findByRole("button", { name: "만드는 중..." })).toBeDisabled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    resolveCreate?.(jsonResponse({ mindmap, rootNodeId: "197c9309-bb27-4d11-8071-c99b8728fc7b" }, 201));
-    await waitFor(() => expect(push).toHaveBeenCalledWith(
-      `/mindmaps/${mindmap.id}?rootNodeId=197c9309-bb27-4d11-8071-c99b8728fc7b&initialEdit=1`,
-    ));
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith(
+      `/mindmaps/${mindmap.id}?rootNodeId=${rootNodeId}&initialEdit=1&create=1`,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("supports Enter rename and rolls back a failed request", async () => {

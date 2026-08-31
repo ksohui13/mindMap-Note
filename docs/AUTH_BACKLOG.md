@@ -1,6 +1,6 @@
 # 인증 기능 Backlog
 
-최종 갱신: 2026-08-24
+최종 갱신: 2026-08-29
 
 이 문서는 OAuth 이후 남은 인증 기능을 지속적으로 추적하기 위한 작업 목록이다. 상태는 `TODO`, `IN_PROGRESS`, `BLOCKED`, `DONE` 중 하나로 관리하며, 완료 시 완료 조건과 검증 결과를 함께 갱신한다.
 
@@ -20,7 +20,6 @@
 | VERIFY-03 | Acceptance test | BLOCKED | 전용 acceptance/test DB에서 `npm run test:acceptance` 전체 통과 |
 | VERIFY-04 | 핵심 기능 사용자 테스트 | TODO | 아래 수동 테스트 체크리스트 완료 및 치명적 문제 없음 |
 | VERIFY-05 | Google 실제 로그인 | BLOCKED | OAuth 키 발급 후 신규 가입·재로그인·취소·충돌 시나리오 통과 |
-| VERIFY-06 | Kakao 실제 로그인 | BLOCKED | OAuth 키 발급 후 신규 가입·재로그인·이메일 미동의 시나리오 통과 |
 
 `test:acceptance`는 DB를 초기화하므로 일반 개발 DB가 아닌 전용 acceptance/test DB에서만 실행한다.
 
@@ -34,7 +33,6 @@
 - [ ] Markdown 내보내기
 - [ ] 다른 계정의 마인드맵 URL 접근 차단
 - [ ] Google 신규 가입·재로그인·로그인 취소
-- [ ] Kakao 신규 가입·재로그인·이메일 제공 거부
 - [ ] 기존 이메일 계정과 동일한 OAuth 이메일의 자동 연결 차단
 
 피드백은 `재현 순서 / 기대 결과 / 실제 결과 / 화면 캡처 / 브라우저·실행 환경` 형식으로 기록한다.
@@ -55,6 +53,5 @@
 | Provider | 구현 | 자동 검증 | 실제 Provider 검증 | 차단 사유 |
 |---|---|---|---|---|
 | Google | DONE | provider mock 기반 검증 | BLOCKED | Google OAuth client ID/secret 미발급 |
-| Kakao | DONE | provider mock 기반 검증 | BLOCKED | Kakao REST API key/client secret 미발급 |
 
-실제 키가 준비되면 `docs/OPERATOR_MANUAL.md`의 callback URI를 등록하고, 신규 가입·재로그인·동의 취소·이메일 충돌·Kakao 이메일 미동의 시나리오를 확인한 뒤 `BLOCKED`를 `DONE`으로 변경한다.
+실제 키가 준비되면 `docs/OPERATOR_MANUAL.md`의 callback URI를 등록하고, 신규 가입·재로그인·동의 취소·이메일 충돌 시나리오를 확인한 뒤 `BLOCKED`를 `DONE`으로 변경한다.

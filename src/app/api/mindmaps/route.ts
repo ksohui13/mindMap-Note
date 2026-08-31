@@ -5,13 +5,14 @@ import type {
   CreateMindmapResponse,
   MindmapListResponse,
 } from "@/features/mindmap/api/contracts";
+import { createMindmapInputSchema } from "@/features/mindmap/api/contracts";
 import { requireApiUser } from "@/server/auth/request";
-import { toMindmapSummaryDTO } from "@/server/domain/mindmap.dto";
+import { toMindmapNodeDTO, toMindmapSummaryDTO } from "@/server/domain/mindmap.dto";
 import {
   createMindmapWithRoot,
   listMindmapsWithNodeCount,
 } from "@/server/domain/mindmap.service";
-import { assertSameOrigin, errorResponse } from "@/server/http/api";
+import { assertSameOrigin, errorResponse, readJsonBody, validationErrorResponse } from "@/server/http/api";
 
 export const dynamic = "force-dynamic";
 
@@ -31,13 +32,25 @@ export async function POST(request: NextRequest) {
   try {
     assertSameOrigin(request);
     const user = await requireApiUser(request);
-    const created = await createMindmapWithRoot(user.id);
+    const body = createMindmapInputSchema.safeParse(await readJsonBody(request));
+    if (!body.success) return validationErrorResponse(body.error);
+    const created = await createMindmapWithRoot(user.id, body.data);
+    const detail = {
+      mindmap: {
+        id: created.mindmap.id,
+        title: created.mindmap.title,
+        updatedAt: created.mindmap.updatedAt.toISOString(),
+      },
+      rootNodeId: created.rootNode.id,
+      nodes: [toMindmapNodeDTO(created.rootNode)],
+    };
     const response: CreateMindmapResponse = {
       mindmap: toMindmapSummaryDTO({
         ...created.mindmap,
         _count: { nodes: 1 },
       }),
       rootNodeId: created.rootNode.id,
+      detail,
     };
     return NextResponse.json(response, { status: 201 });
   } catch (error) {

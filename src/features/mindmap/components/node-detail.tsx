@@ -4,7 +4,9 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type RefObject,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 import { MarkdownPreview } from "@/features/mindmap/components/markdown-preview";
@@ -26,6 +28,7 @@ type NodeDetailProps = {
   fullscreenButtonRef: RefObject<HTMLButtonElement | null>;
   saveRecord: SaveRecord;
   onRetrySave: () => void;
+  onSave: () => void;
   recovery?: DraftJournalEntry;
   onApplyRecovery: () => void;
   onDiscardRecovery: () => void;
@@ -34,14 +37,51 @@ type NodeDetailProps = {
 
 export function NodeDetailPanel(props: NodeDetailProps) {
   const [tab, setTab] = useState<DetailTab>("edit");
+  const [panelWidth, setPanelWidth] = useState(416);
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const content = props.content;
   const effectiveDraft = props.draft ?? content.data?.node.contentMd;
+
+  function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    resizeStart.current = { x: event.clientX, width: panelWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function resizeBy(delta: number) {
+    const maxWidth = Math.max(320, Math.min(720, window.innerWidth - 64));
+    setPanelWidth((current) => Math.min(maxWidth, Math.max(320, current + delta)));
+  }
 
   return (
     <aside
       aria-label="노드 상세 패널"
-      className="absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-[var(--border)] bg-white shadow-2xl sm:w-[26rem]"
+      style={{ "--detail-panel-width": `${panelWidth}px` } as CSSProperties}
+      onPointerMove={(event) => {
+        if (!resizeStart.current) return;
+        const nextWidth = resizeStart.current.width + resizeStart.current.x - event.clientX;
+        const maxWidth = Math.max(320, Math.min(720, window.innerWidth - 64));
+        setPanelWidth(Math.min(maxWidth, Math.max(320, nextWidth)));
+      }}
+      onPointerUp={() => { resizeStart.current = null; }}
+      className="absolute inset-y-0 right-0 z-20 flex w-full max-w-full flex-col border-l border-[var(--border)] bg-white shadow-2xl sm:w-[var(--detail-panel-width)]"
     >
+      <button
+        type="button"
+        role="separator"
+        aria-label="노드 상세 패널 너비 조절"
+        aria-orientation="vertical"
+        aria-valuemin={320}
+        aria-valuemax={720}
+        aria-valuenow={panelWidth}
+        onPointerDown={startResize}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") resizeBy(16);
+          if (event.key === "ArrowRight") resizeBy(-16);
+        }}
+        className="group absolute inset-y-0 left-0 z-10 hidden w-2 -translate-x-1/2 cursor-col-resize touch-none sm:block"
+      >
+        <span className="absolute inset-y-0 left-1/2 w-px bg-transparent transition group-hover:bg-violet-300" />
+      </button>
       <DetailHeader
         title={props.title}
         onClose={props.onClose}
@@ -69,6 +109,7 @@ export function NodeDetailPanel(props: NodeDetailProps) {
       <DraftStatus
         record={props.saveRecord}
         onRetry={props.onRetrySave}
+        onSave={props.onSave}
         storageWarning={props.storageWarning}
       />
     </aside>
@@ -84,6 +125,7 @@ export function NodeDetailFullscreen({
   content,
   saveRecord,
   onRetrySave,
+  onSave,
   recovery,
   onApplyRecovery,
   onDiscardRecovery,
@@ -164,7 +206,7 @@ export function NodeDetailFullscreen({
           </>
         )}
       </div>
-      <DraftStatus record={saveRecord} onRetry={onRetrySave} storageWarning={storageWarning} />
+      <DraftStatus record={saveRecord} onRetry={onRetrySave} onSave={onSave} storageWarning={storageWarning} />
     </div>
   );
 }
@@ -264,15 +306,25 @@ function DetailContent({
 function DraftStatus({
   record,
   onRetry,
+  onSave,
   storageWarning,
 }: {
   record: SaveRecord;
   onRetry: () => void;
+  onSave: () => void;
   storageWarning: string | null;
 }) {
   return (
-    <footer className="border-t border-[var(--border)] bg-white px-4 py-2">
-      <SaveStatus record={record} onRetry={onRetry} compact />
+    <footer className="flex items-center gap-3 border-t border-[var(--border)] bg-white px-4 py-2">
+      <div className="min-w-0 flex-1"><SaveStatus record={record} onRetry={onRetry} compact /></div>
+      <button
+        type="button"
+        disabled={record.phase === "saving"}
+        onClick={onSave}
+        className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-extrabold text-white disabled:cursor-wait disabled:opacity-60"
+      >
+        {record.phase === "saving" ? "저장 중…" : "저장"}
+      </button>
       {storageWarning ? <p role="alert" className="mt-1 text-xs font-bold text-[var(--danger)]">{storageWarning}</p> : null}
     </footer>
   );
