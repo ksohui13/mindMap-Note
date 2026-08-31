@@ -3,16 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PATCH as patchCollapse } from "@/app/api/nodes/[nodeId]/collapse/route";
 import { PATCH as patchPosition } from "@/app/api/nodes/[nodeId]/position/route";
+import { PATCH as patchPositions } from "@/app/api/mindmaps/[mindmapId]/nodes/positions/route";
 import { requireApiUser } from "@/server/auth/request";
 import { DomainError } from "@/server/domain/errors";
 import {
   updateNodeCollapseForUser,
+  updateNodePositionsForUser,
   updateNodePositionForUser,
 } from "@/server/domain/node.service";
 
 vi.mock("@/server/auth/request", () => ({ requireApiUser: vi.fn() }));
 vi.mock("@/server/domain/node.service", () => ({
   updateNodeCollapseForUser: vi.fn(),
+  updateNodePositionsForUser: vi.fn(),
   updateNodePositionForUser: vi.fn(),
 }));
 
@@ -34,6 +37,7 @@ const nodeRecord = {
   updatedAt: timestamp,
 };
 const context = { params: Promise.resolve({ nodeId }) };
+const positionsContext = { params: Promise.resolve({ mindmapId }) };
 
 function request(path: string, body: unknown) {
   return new NextRequest(`http://localhost${path}`, {
@@ -51,6 +55,7 @@ beforeEach(() => {
   vi.mocked(requireApiUser).mockReset();
   vi.mocked(updateNodePositionForUser).mockReset();
   vi.mocked(updateNodeCollapseForUser).mockReset();
+  vi.mocked(updateNodePositionsForUser).mockReset();
   vi.mocked(requireApiUser).mockResolvedValue({ id: userId, email: "user@example.test" });
 });
 
@@ -142,5 +147,42 @@ describe("node collapse route", () => {
     await expect(conflict.json()).resolves.toMatchObject({
       error: { code: "CONFLICT", details: { currentRevision: 6 } },
     });
+  });
+});
+
+describe("node batch positions route", () => {
+  it("updates an owned batch with each node revision", async () => {
+    vi.mocked(updateNodePositionsForUser).mockResolvedValue({
+      nodes: [{ ...nodeRecord, x: 120, y: -30, revision: 1 }],
+      mindmapUpdatedAt: timestamp,
+    });
+    const input = { nodes: [{ id: nodeId, x: 120, y: -30, revision: 0 }] };
+
+    const response = await patchPositions(
+      request(`/api/mindmaps/${mindmapId}/nodes/positions`, input),
+      positionsContext,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      nodes: [{ id: nodeId, x: 120, y: -30, revision: 1 }],
+      mindmapUpdatedAt: timestamp.toISOString(),
+    });
+    expect(updateNodePositionsForUser).toHaveBeenCalledWith(
+      mindmapId,
+      userId,
+      input.nodes,
+    );
+  });
+
+  it("rejects duplicate node ids before calling the service", async () => {
+    const duplicate = { id: nodeId, x: 1, y: 2, revision: 0 };
+    const response = await patchPositions(
+      request(`/api/mindmaps/${mindmapId}/nodes/positions`, { nodes: [duplicate, duplicate] }),
+      positionsContext,
+    );
+
+    expect(response.status).toBe(400);
+    expect(updateNodePositionsForUser).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,7 @@ import {
   updateNode,
   updateNodeCollapseForUser,
   updateNodeContentForUser,
+  updateNodePositionsForUser,
   updateNodePositionForUser,
   updateNodeTitleForUser,
 } from "@/server/domain/node.service";
@@ -140,6 +141,62 @@ describe("node domain services", () => {
       stranger.user.id,
       false,
       2,
+      integrationClient,
+    )).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("updates positions atomically and rolls the whole batch back on a stale revision", async () => {
+    const owner = await createTreeOwner("batch-position-owner@example.test");
+    const first = await createChildNode({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "First",
+      x: 10,
+      y: 10,
+    }, integrationClient);
+    const second = await createChildNode({
+      mindmapId: owner.mindmap.id,
+      parentNodeId: owner.rootNode.id,
+      title: "Second",
+      x: 20,
+      y: 20,
+    }, integrationClient);
+
+    const updated = await updateNodePositionsForUser(
+      owner.mindmap.id,
+      owner.user.id,
+      [
+        { id: first.id, x: 100, y: 110, revision: 0 },
+        { id: second.id, x: 200, y: 210, revision: 0 },
+      ],
+      integrationClient,
+    );
+    expect(updated.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id, x: 100, y: 110, revision: 1 }),
+      expect.objectContaining({ id: second.id, x: 200, y: 210, revision: 1 }),
+    ]));
+
+    await expect(updateNodePositionsForUser(
+      owner.mindmap.id,
+      owner.user.id,
+      [
+        { id: first.id, x: 999, y: 999, revision: 1 },
+        { id: second.id, x: 888, y: 888, revision: 0 },
+      ],
+      integrationClient,
+    )).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(integrationClient.node.findUniqueOrThrow({ where: { id: first.id } }))
+      .resolves.toMatchObject({ x: 100, y: 110, revision: 1 });
+  });
+
+  it("hides foreign nodes and mindmaps from batch position updates", async () => {
+    const owner = await createTreeOwner("batch-position-owned@example.test");
+    const stranger = await createTreeOwner("batch-position-stranger@example.test");
+
+    await expect(updateNodePositionsForUser(
+      owner.mindmap.id,
+      stranger.user.id,
+      [{ id: owner.rootNode.id, x: 1, y: 2, revision: 0 }],
       integrationClient,
     )).rejects.toMatchObject({ code: "NOT_FOUND" });
   });

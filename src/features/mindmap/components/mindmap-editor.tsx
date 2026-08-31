@@ -27,6 +27,7 @@ import {
 import type { ExportScope, MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import { ExportModal, type ExportPreparationResult } from "@/features/mindmap/components/export-modal";
 import {
+  useBatchUpdateNodePositions,
   useCreateNode,
   useUpdateNodeCollapse,
   useUpdateNodePosition,
@@ -51,7 +52,10 @@ import {
   type MindmapFlowEdge,
   type MindmapFlowNode,
 } from "@/features/mindmap/model/flow-adapter";
-import { calculateChildPosition } from "@/features/mindmap/model/node-position";
+import {
+  calculateChildPosition,
+  calculateRevealedNodePositions,
+} from "@/features/mindmap/model/node-position";
 import {
   applyNodeViewOverrides,
   getDescendantIds,
@@ -90,10 +94,12 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const updateTitleMutation = useUpdateNodeTitle();
   const updatePositionMutation = useUpdateNodePosition();
   const updateCollapseMutation = useUpdateNodeCollapse();
+  const batchPositionMutation = useBatchUpdateNodePositions();
   const createNode = createNodeMutation.mutateAsync;
   const updateNodeTitle = updateTitleMutation.mutateAsync;
   const updateNodePosition = updatePositionMutation.mutateAsync;
   const updateNodeCollapse = updateCollapseMutation.mutateAsync;
+  const batchUpdatePositions = batchPositionMutation.mutateAsync;
   const renameMindmap = useRenameMindmap();
   const deleteMindmap = useDeleteMindmap();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
@@ -119,6 +125,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     { kind: "position" | "collapse"; message: string }
   >>>({});
   const createLocks = useRef(new Set<string>());
+  const placementReservations = useRef(new Map<string, NodePosition>());
+  const pendingLayoutBatches = useRef(new Map<string, Readonly<Record<string, NodePosition>>>());
+  const nodeLayoutBatch = useRef(new Map<string, string>());
+  const layoutBatchLocks = useRef(new Set<string>());
   const pendingCreateInputs = useRef(new Map<string, Parameters<typeof createNodeMutation.mutateAsync>[0]>());
   const creationPromises = useRef(new Map<string, Promise<boolean>>());
   const nodeMutationLocks = useRef(new Set<string>());
@@ -137,6 +147,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     markIdle: markNodeIdle,
     registerRevision,
     run: runNodeMutation,
+    waitForNodes,
   } = saveCoordinator;
   const deleteNodeMutation = useDeleteNode();
   const deletionImpact = useNodeDeletionImpact(deleteTargetNodeId);
@@ -306,6 +317,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       replaceCachedNode(response.node);
       registerRevision(response.node.id, response.node.revision);
       pendingCreateInputs.current.delete(nodeId);
+      placementReservations.current.delete(nodeId);
       return true;
     }).catch((error: unknown) => {
       setCreationErrors((current) => ({
@@ -329,13 +341,25 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       createLocks.current.has(parentNodeId) ||
       nodeMutationLocks.current.has(parentNodeId)
     ) return;
-    const current = detail.data;
-    const parent = effectiveNodes.find((node) => node.id === parentNodeId);
-    if (!current || !parent || parent.isCollapsed) return;
+    const current = queryClient.getQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(mindmapId));
+    if (!current) return;
+    const latestNodes = applyNodeViewOverrides(
+      current.nodes,
+      positionOverrides,
+      collapseOverrides,
+    );
+    const latestVisibleNodes = selectVisibleNodes(latestNodes, current.rootNodeId);
+    const parent = latestVisibleNodes.find((node) => node.id === parentNodeId);
+    if (!parent || parent.isCollapsed) return;
 
     createLocks.current.add(parentNodeId);
-    const position = calculateChildPosition(parent, effectiveNodes);
+    const position = calculateChildPosition(
+      parent,
+      latestVisibleNodes,
+      [...placementReservations.current.values()],
+    );
     const nodeId = crypto.randomUUID();
+    placementReservations.current.set(nodeId, position);
     const input = {
       mindmapId,
       input: { id: nodeId, parentNodeId, title: "새 노드", ...position },
@@ -363,7 +387,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     setEditError(null);
     createLocks.current.delete(parentNodeId);
     persistOptimisticNode(nodeId);
-  }, [detail.data, effectiveNodes, mindmapId, persistOptimisticNode, queryClient, registerRevision]);
+  }, [collapseOverrides, mindmapId, persistOptimisticNode, positionOverrides, queryClient, registerRevision]);
 
   const retryCreate = useCallback((nodeId: string) => {
     persistOptimisticNode(nodeId);
@@ -372,6 +396,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
   const discardOptimisticNode = useCallback((nodeId: string) => {
     if (creationPromises.current.has(nodeId)) return;
     pendingCreateInputs.current.delete(nodeId);
+    placementReservations.current.delete(nodeId);
     setCreationErrors((current) => omitKey(current, nodeId));
     queryClient.setQueryData<MindmapDetailResponse>(
       mindmapDetailQueryKey(mindmapId),
@@ -479,6 +504,67 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     }
   }, [clearMutationError, detail.data?.nodes, refetchDetail, replaceCachedNode, runNodeMutation, setNodePending, updateNodeCollapse]);
 
+  const persistLayoutBatch = useCallback(async (
+    batchId: string,
+    positions: Readonly<Record<string, NodePosition>>,
+  ) => {
+    if (layoutBatchLocks.current.has(batchId)) return;
+    const nodeIds = Object.keys(positions);
+    if (nodeIds.length === 0) return;
+    layoutBatchLocks.current.add(batchId);
+    for (const nodeId of nodeIds) setNodePending(nodeId, true);
+    setMutationErrors((current) => omitNodeKeys(current, new Set(nodeIds)));
+
+    try {
+      await waitForNodes(nodeIds);
+      const current = queryClient.getQueryData<MindmapDetailResponse>(mindmapDetailQueryKey(mindmapId));
+      if (!current) throw new Error("마인드맵 정보를 불러오지 못했습니다.");
+      const byId = new Map(current.nodes.map((node) => [node.id, node]));
+      const inputNodes = nodeIds.map((nodeId) => {
+        const node = byId.get(nodeId);
+        if (!node) throw new Error("자동 배치할 노드를 찾지 못했습니다.");
+        return { id: nodeId, ...positions[nodeId], revision: node.revision };
+      });
+      const response = await batchUpdatePositions({
+        mindmapId,
+        input: { nodes: inputNodes },
+      });
+      const updatedById = new Map(response.nodes.map((node) => [node.id, node]));
+      queryClient.setQueryData<MindmapDetailResponse>(
+        mindmapDetailQueryKey(mindmapId),
+        (cached) => cached
+          ? {
+              ...cached,
+              mindmap: { ...cached.mindmap, updatedAt: response.mindmapUpdatedAt },
+              nodes: cached.nodes.map((node) => updatedById.get(node.id) ?? node),
+            }
+          : cached,
+      );
+      for (const node of response.nodes) registerRevision(node.id, node.revision);
+      const nodeIdSet = new Set(nodeIds);
+      setPositionOverrides((currentOverrides) => omitNodeKeys(currentOverrides, nodeIdSet));
+      setMutationErrors((currentErrors) => omitNodeKeys(currentErrors, nodeIdSet));
+      pendingLayoutBatches.current.delete(batchId);
+      for (const nodeId of nodeIds) nodeLayoutBatch.current.delete(nodeId);
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 409) {
+        await refetchDetail();
+      }
+      setMutationErrors((current) => ({
+        ...current,
+        ...Object.fromEntries(nodeIds.map((nodeId) => [nodeId, {
+          kind: "position" as const,
+          message: error instanceof ApiClientError && error.status === 409
+            ? "다른 변경사항을 반영했습니다. 자동 배치를 다시 시도해 주세요."
+            : error instanceof Error ? error.message : "자동 배치를 저장하지 못했습니다.",
+        }])),
+      }));
+    } finally {
+      layoutBatchLocks.current.delete(batchId);
+      for (const nodeId of nodeIds) setNodePending(nodeId, false);
+    }
+  }, [batchUpdatePositions, mindmapId, queryClient, refetchDetail, registerRevision, setNodePending, waitForNodes]);
+
   const changeNodePositions = useCallback((changes: NodeChange<MindmapFlowNode>[]) => {
     if (!changes.some((change) => change.type === "position" && change.position)) return;
     setPositionOverrides((current) => {
@@ -497,6 +583,32 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     const node = effectiveNodes.find((candidate) => candidate.id === nodeId);
     if (!node) return;
     const nextCollapsed = !node.isCollapsed;
+    if (!nextCollapsed && detail.data) {
+      const visibleBefore = selectVisibleNodes(effectiveNodes, detail.data.rootNodeId);
+      const visibleBeforeIds = new Set(visibleBefore.map((candidate) => candidate.id));
+      const expandedNodes = effectiveNodes.map((candidate) => candidate.id === nodeId
+        ? { ...candidate, isCollapsed: false }
+        : candidate);
+      const revealedNodeIds = new Set(
+        selectVisibleNodes(expandedNodes, detail.data.rootNodeId)
+          .map((candidate) => candidate.id)
+          .filter((candidateId) => !visibleBeforeIds.has(candidateId)),
+      );
+      const positions = calculateRevealedNodePositions(
+        expandedNodes,
+        visibleBeforeIds,
+        revealedNodeIds,
+      );
+      if (Object.keys(positions).length > 0) {
+        const batchId = `expand:${nodeId}`;
+        pendingLayoutBatches.current.set(batchId, positions);
+        for (const revealedNodeId of Object.keys(positions)) {
+          nodeLayoutBatch.current.set(revealedNodeId, batchId);
+        }
+        setPositionOverrides((current) => ({ ...current, ...positions }));
+        void persistLayoutBatch(batchId, positions);
+      }
+    }
     setCollapseOverrides((current) => ({ ...current, [nodeId]: nextCollapsed }));
     clearMutationError(nodeId);
 
@@ -512,24 +624,44 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       }
     }
     void persistCollapse(nodeId, nextCollapsed);
-  }, [clearMutationError, detail.data, detailPanelOpen, editingNodeId, effectiveNodes, flushMarkdown, parentNodeIds, persistCollapse, selectedNodeId]);
+  }, [clearMutationError, detail.data, detailPanelOpen, editingNodeId, effectiveNodes, flushMarkdown, parentNodeIds, persistCollapse, persistLayoutBatch, selectedNodeId]);
 
   const retryNodeMutation = useCallback((nodeId: string) => {
     const error = mutationErrors[nodeId];
     if (!error) return;
     if (error.kind === "position") {
+      const batchId = nodeLayoutBatch.current.get(nodeId);
+      const positions = batchId ? pendingLayoutBatches.current.get(batchId) : undefined;
+      if (batchId && positions) {
+        void persistLayoutBatch(batchId, positions);
+        return;
+      }
       const position = positionOverrides[nodeId];
       if (position) void persistPosition(nodeId, position);
       return;
     }
     const isCollapsed = collapseOverrides[nodeId];
     if (isCollapsed !== undefined) void persistCollapse(nodeId, isCollapsed);
-  }, [collapseOverrides, mutationErrors, persistCollapse, persistPosition, positionOverrides]);
+  }, [collapseOverrides, mutationErrors, persistCollapse, persistLayoutBatch, persistPosition, positionOverrides]);
 
   const revertNodeMutation = useCallback((nodeId: string) => {
     const error = mutationErrors[nodeId];
     if (!error) return;
     if (error.kind === "position") {
+      const batchId = nodeLayoutBatch.current.get(nodeId);
+      const positions = batchId ? pendingLayoutBatches.current.get(batchId) : undefined;
+      if (batchId && positions) {
+        const batchNodeIds = Object.keys(positions);
+        const batchNodeIdSet = new Set(batchNodeIds);
+        setPositionOverrides((current) => omitNodeKeys(current, batchNodeIdSet));
+        setMutationErrors((current) => omitNodeKeys(current, batchNodeIdSet));
+        pendingLayoutBatches.current.delete(batchId);
+        for (const batchNodeId of batchNodeIds) {
+          nodeLayoutBatch.current.delete(batchNodeId);
+          markNodeIdle(batchNodeId, "position");
+        }
+        return;
+      }
       setPositionOverrides((current) => {
         const next = { ...current };
         delete next[nodeId];
@@ -551,6 +683,7 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
       void flushMarkdown(selectedNodeId);
     }
     setSelectedNodeId(nodeId);
+    setDetailFullscreenOpen(false);
     setDetailPanelOpen(true);
   }, [flushMarkdown, selectedNodeId]);
 
@@ -567,12 +700,12 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
 
   const selectCanvasNode = useCallback((nodeId: string | null) => {
     if (nodeId) {
-      openNodeDetail(nodeId);
+      setSelectedNodeId(nodeId);
       return;
     }
     setSelectedNodeId(null);
     closeNodeDetail();
-  }, [closeNodeDetail, openNodeDetail]);
+  }, [closeNodeDetail]);
 
   const deleteTargetIds = useMemo(() => {
     if (!deleteTargetNodeId || !detail.data) return [];
@@ -666,6 +799,10 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         queryClient.removeQueries({ queryKey: nodeDeletionImpactQueryKey(nodeId), exact: true });
         createLocks.current.delete(nodeId);
         nodeMutationLocks.current.delete(nodeId);
+        placementReservations.current.delete(nodeId);
+        const batchId = nodeLayoutBatch.current.get(nodeId);
+        nodeLayoutBatch.current.delete(nodeId);
+        if (batchId) pendingLayoutBatches.current.delete(batchId);
       }
       setPositionOverrides((current) => omitNodeKeys(current, deletedIds));
       setCollapseOverrides((current) => omitNodeKeys(current, deletedIds));

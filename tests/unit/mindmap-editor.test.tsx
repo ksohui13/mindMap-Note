@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import { MindmapEditor } from "@/features/mindmap/components/mindmap-editor";
 import { createDraftJournalEntry, draftJournalKey, writeDraftJournal } from "@/features/mindmap/lib/draft-journal";
+import { hasPositionCollision } from "@/features/mindmap/model/node-position";
 
 vi.mock("next/link", () => ({ default: ({ children, href, ...props }: { children: ReactNode; href: string }) => <a href={href} {...props}>{children}</a> }));
 const replace = vi.fn();
@@ -108,14 +109,23 @@ describe("MindmapEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "화면 맞춤" }));
   });
 
-  it("selects a node and clears selection from the pane", async () => {
+  it("selects a node without opening detail and opens detail only from its button", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       node: { id: "child", title: "자식", contentMd: "", revision: 0 },
     }), { status: 200, headers: { "content-type": "application/json" } })));
     const { container } = renderEditor(detail);
-    const childTitle = screen.getByText("자식");
-    fireEvent.click(childTitle);
+    const childNode = container.querySelector('[data-id="child"]');
+    expect(childNode).not.toBeNull();
+    fireEvent.click(childNode as Element);
     expect(screen.getByTestId("mindmap-node")).toHaveClass("ring-4");
+    expect(screen.queryByLabelText("노드 상세 패널")).not.toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByText("자식"));
+    expect(screen.getByLabelText("노드 제목")).toBeInTheDocument();
+    expect(screen.queryByLabelText("노드 상세 패널")).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText("노드 제목"), { key: "Escape" });
+
+    fireEvent.click(screen.getByLabelText("자식 상세 열기"));
     expect(await screen.findByLabelText("노드 상세 패널")).toBeInTheDocument();
 
     const pane = container.querySelector(".react-flow__pane");
@@ -143,7 +153,7 @@ describe("MindmapEditor", () => {
     const textarea = await screen.findByLabelText("Markdown 내용");
     const resizeHandle = screen.getByRole("separator", { name: "노드 상세 패널 너비 조절" });
     fireEvent.keyDown(resizeHandle, { key: "ArrowLeft" });
-    expect(resizeHandle).toHaveAttribute("aria-valuenow", "432");
+    expect(resizeHandle).toHaveAttribute("aria-valuenow", "376");
     fireEvent.change(textarea, { target: { value: "즉시 저장" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
@@ -223,7 +233,7 @@ describe("MindmapEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = renderEditor(detail);
 
-    fireEvent.click(screen.getByText("자식"));
+    fireEvent.click(screen.getByLabelText("자식 상세 열기"));
     const childEditor = await screen.findByLabelText("Markdown 내용");
     fireEvent.change(childEditor, { target: { value: "# 자식 초안" } });
     expect(screen.getAllByText("저장 대기 중").length).toBeGreaterThan(0);
@@ -296,8 +306,8 @@ describe("MindmapEditor", () => {
           id: body.id,
           parentNodeId: "root",
           title: "새 노드",
-          x: 240,
-          y: 0,
+          x: 320,
+          y: -200,
           isCollapsed: false,
           revision: 0,
         },
@@ -319,10 +329,44 @@ describe("MindmapEditor", () => {
       id: expect.any(String),
       parentNodeId: "root",
       title: "새 노드",
-      x: 240,
-      y: 0,
+      x: 320,
+      y: -200,
     });
     expect(document.querySelector(`[data-id="${createBody.id}"]`)).not.toBeNull();
+  });
+
+  it("reserves non-overlapping rectangles for ten rapid child creations", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockImplementation(() => new Promise<Response>((resolve) => pending.push(resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor(detail);
+
+    for (let index = 0; index < 10; index += 1) {
+      fireEvent.click(screen.getByLabelText("시작에 자식 노드 추가"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(index + 1));
+    }
+    const created = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)) as {
+      id: string;
+      x: number;
+      y: number;
+    });
+    for (const [index, position] of created.entries()) {
+      expect(hasPositionCollision(position, created.filter((_, candidate) => candidate !== index))).toBe(false);
+    }
+
+    created.forEach((node, index) => pending[index](new Response(JSON.stringify({
+      node: {
+        ...node,
+        parentNodeId: "root",
+        title: "새 노드",
+        isCollapsed: false,
+        revision: 0,
+      },
+      mindmapUpdatedAt: "2026-08-31T00:00:00.000Z",
+    }), { status: 201, headers: { "content-type": "application/json" } })));
+    await waitFor(() => expect(screen.getAllByText("새 노드")).toHaveLength(9));
+    expect(screen.getByLabelText("노드 제목")).toHaveValue("새 노드");
   });
 
   it("keeps child creation actionable after a server failure", async () => {
@@ -343,10 +387,22 @@ describe("MindmapEditor", () => {
   it("collapses and expands descendants immediately while preserving the tree", async () => {
     const root = detail.nodes[0];
     let collapseRevision = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/content")) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/content")) {
         return new Response(JSON.stringify({
           node: { id: "child", title: "자식", contentMd: "", revision: 0 },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/nodes/positions")) {
+        const body = JSON.parse(String(init?.body)) as { nodes: Array<{ id: string; x: number; y: number }> };
+        return new Response(JSON.stringify({
+          nodes: body.nodes.map((position) => ({
+            ...detail.nodes.find((node) => node.id === position.id),
+            ...position,
+            revision: 1,
+          })),
+          mindmapUpdatedAt: "2026-08-31T00:00:00.000Z",
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
       collapseRevision += 1;
@@ -358,7 +414,9 @@ describe("MindmapEditor", () => {
     renderEditor(detail);
 
     expect(screen.queryByLabelText("자식 하위 트리 접기")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("자식"));
+    const childNode = screen.getByText("자식").closest('[data-id="child"]');
+    expect(childNode).not.toBeNull();
+    fireEvent.click(childNode as Element);
     fireEvent.click(screen.getByLabelText("시작 하위 트리 접기"));
 
     expect(screen.queryByText("자식")).not.toBeInTheDocument();
@@ -371,6 +429,11 @@ describe("MindmapEditor", () => {
     fireEvent.click(expandButton);
     await waitFor(() => expect(screen.getByText("자식")).toBeInTheDocument());
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/collapse"))).toHaveLength(2);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/nodes/positions"))).toBe(true));
+    const batchCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/nodes/positions"));
+    expect(JSON.parse(String(batchCall?.[1]?.body))).toEqual({
+      nodes: [{ id: "child", x: 320, y: 0, revision: 0 }],
+    });
   });
 
   it("keeps a failed collapse locally and can restore the server state", async () => {

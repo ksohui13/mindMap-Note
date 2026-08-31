@@ -301,6 +301,99 @@ export function updateNodePositionForUser(
   return updateOwnedNodeWithRevision(nodeId, userId, revision, { x, y }, client);
 }
 
+export async function updateNodePositionsForUser(
+  mindmapId: string,
+  userId: string,
+  updates: readonly Readonly<{
+    id: string;
+    x: number;
+    y: number;
+    revision: number;
+  }>[],
+  client: PrismaClient = prisma,
+): Promise<{ nodes: Node[]; mindmapUpdatedAt: Date }> {
+  if (updates.length === 0) {
+    throw new DomainError("INVALID_INPUT", "At least one node position is required.");
+  }
+  const ids = new Set<string>();
+  for (const update of updates) {
+    assertFinitePosition(update.x, update.y);
+    if (!Number.isInteger(update.revision) || update.revision < 0) {
+      throw new DomainError("INVALID_INPUT", "Node revision must be a non-negative integer.");
+    }
+    if (ids.has(update.id)) {
+      throw new DomainError("INVALID_INPUT", "Node ids must be unique.");
+    }
+    ids.add(update.id);
+  }
+
+  try {
+    return await client.$transaction(async (transaction) => {
+      if (!(await lockMindmapForUser(mindmapId, userId, transaction))) {
+        throw new DomainError("NOT_FOUND", "Mindmap was not found.");
+      }
+      const ownedNodes = await transaction.node.findMany({
+        where: { id: { in: [...ids] }, mindmapId },
+        select: { id: true, revision: true },
+      });
+      if (ownedNodes.length !== updates.length) {
+        throw new DomainError("NOT_FOUND", "One or more nodes were not found.");
+      }
+      const revisionById = new Map(ownedNodes.map((node) => [node.id, node.revision]));
+
+      for (const update of updates) {
+        const currentRevision = revisionById.get(update.id);
+        if (currentRevision !== update.revision) {
+          throw new DomainError(
+            "CONFLICT",
+            "One or more nodes were changed by another request.",
+            undefined,
+            { currentRevision: currentRevision ?? -1 },
+          );
+        }
+        const result = await transaction.node.updateMany({
+          where: { id: update.id, mindmapId, revision: update.revision },
+          data: { x: update.x, y: update.y, revision: { increment: 1 } },
+        });
+        if (result.count !== 1) {
+          throw new DomainError(
+            "CONFLICT",
+            "One or more nodes were changed by another request.",
+          );
+        }
+      }
+
+      await touchMindmap(mindmapId, transaction);
+      const [nodes, mindmap] = await Promise.all([
+        transaction.node.findMany({ where: { id: { in: [...ids] }, mindmapId } }),
+        transaction.mindmap.findUniqueOrThrow({
+          where: { id: mindmapId },
+          select: { updatedAt: true },
+        }),
+      ]);
+      const byId = new Map(nodes.map((node) => [node.id, node]));
+      return {
+        nodes: updates.map((update) => {
+          const node = byId.get(update.id);
+          if (!node) throw new DomainError("NOT_FOUND", "One or more nodes were not found.");
+          return node;
+        }),
+        mindmapUpdatedAt: mindmap.updatedAt,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    if (isPrismaError(error, "P2034")) {
+      throw new DomainError(
+        "CONFLICT",
+        "One or more nodes were changed by another request.",
+        error,
+      );
+    }
+    return mapPrismaError(error);
+  }
+}
+
 export function updateNodeCollapseForUser(
   nodeId: string,
   userId: string,

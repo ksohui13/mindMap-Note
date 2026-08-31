@@ -3,12 +3,14 @@
 import { useMutation } from "@tanstack/react-query";
 
 import {
+  batchUpdateNodePositions,
   createNode,
   updateNodeCollapse,
   updateNodePosition,
   updateNodeTitle,
 } from "@/features/mindmap/api/client";
 import type {
+  BatchUpdateNodePositionsInput,
   CreateNodeInput,
   UpdateNodeCollapseInput,
   UpdateNodePositionInput,
@@ -33,6 +35,18 @@ export function useUpdateNodePosition() {
   return useMutation({
     mutationFn: ({ nodeId, input }: { nodeId: string; input: UpdateNodePositionInput }) =>
       updateNodePosition(nodeId, input),
+  });
+}
+
+export function useBatchUpdateNodePositions() {
+  return useMutation({
+    mutationFn: ({
+      mindmapId,
+      input,
+    }: {
+      mindmapId: string;
+      input: BatchUpdateNodePositionsInput;
+    }) => batchUpdateNodePositions(mindmapId, input),
   });
 }
 

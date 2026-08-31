@@ -2,6 +2,24 @@ import { readFile } from "node:fs/promises";
 
 import { expect, test } from "@playwright/test";
 
+async function expectVisibleNodesNotToOverlap(page: import("@playwright/test").Page) {
+  const boxes = (await page.locator(".react-flow__node").evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { id: node.getAttribute("data-id"), x: box.x, y: box.y, width: box.width, height: box.height };
+  }))).filter((box) => box.width > 0 && box.height > 0);
+  for (let leftIndex = 0; leftIndex < boxes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < boxes.length; rightIndex += 1) {
+      const left = boxes[leftIndex];
+      const right = boxes[rightIndex];
+      const overlaps = left.x < right.x + right.width &&
+        left.x + left.width > right.x &&
+        left.y < right.y + right.height &&
+        left.y + left.height > right.y;
+      expect(overlaps, `${left.id} and ${right.id} overlap`).toBe(false);
+    }
+  }
+}
+
 test.describe("mindmap editor canvas", () => {
   test.skip(process.env.E2E_DATABASE_READY !== "true", "Requires migrated PostgreSQL test data.");
 
@@ -36,8 +54,10 @@ test.describe("mindmap editor canvas", () => {
     await expect(page.getByText("E2E Child", { exact: true })).toBeVisible();
     await expect(page.locator(".react-flow__edge")).toHaveCount(1);
 
-    await page.getByText("E2E Child", { exact: true }).click();
+    const childNode = page.locator('.react-flow__node').filter({ hasText: "E2E Child" });
+    await childNode.click();
     await expect(page.getByTestId("mindmap-node")).toHaveClass(/ring-4/);
+    await expect(page.getByLabel("노드 상세 패널")).toHaveCount(0);
     const viewport = page.locator(".react-flow__viewport");
     const beforeZoom = await viewport.getAttribute("style");
     await page.getByRole("button", { name: "확대" }).click();
@@ -88,6 +108,15 @@ test.describe("mindmap editor canvas", () => {
     await siblingInput.fill("형제 노드");
     await siblingInput.press("Enter");
 
+    for (let index = 2; index <= 8; index += 1) {
+      await page.getByLabel("루트 개념에 자식 노드 추가").click();
+      const rapidInput = page.getByLabel("노드 제목");
+      await rapidInput.fill(`형제 노드 ${index}`);
+      await rapidInput.press("Enter");
+    }
+    await expect(page.locator(".react-flow__node")).toHaveCount(11);
+    await expectVisibleNodesNotToOverlap(page);
+
     const mindmapId = page.url().match(/\/mindmaps\/([0-9a-f-]+)/)?.[1] ?? "";
     expect(mindmapId).toBeTruthy();
     const childNode = page.locator('.react-flow__node').filter({ hasText: "첫 번째 자식" });
@@ -110,7 +139,7 @@ test.describe("mindmap editor canvas", () => {
     await expect(page.getByText("루트 개념", { exact: true })).toBeVisible();
     await expect(page.getByText("첫 번째 자식", { exact: true })).toBeVisible();
     await expect(page.getByText("손자 노드", { exact: true })).toBeVisible();
-    await expect(page.locator(".react-flow__edge")).toHaveCount(3);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(10);
 
     const collapseSaved = page.waitForResponse((response) =>
       response.url().includes("/collapse") && response.request().method() === "PATCH",
@@ -174,12 +203,24 @@ test.describe("mindmap editor canvas", () => {
     await page.getByRole("button", { name: "+ 새 마인드맵" }).click();
 
     await page.getByLabel("노드 제목").press("Escape");
+    await page.getByText("시작", { exact: true }).click();
+    await expect(page.getByLabel("노드 상세 패널")).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /상세 전체화면/ })).toHaveCount(0);
+    await page.getByText("시작", { exact: true }).dblclick();
+    await expect(page.getByLabel("노드 제목")).toBeVisible();
+    await expect(page.getByLabel("노드 상세 패널")).toHaveCount(0);
+    await page.getByLabel("노드 제목").press("Escape");
     const viewport = page.locator(".react-flow__viewport");
     await page.getByRole("button", { name: "확대" }).click();
     await page.waitForTimeout(250);
     const viewportBefore = await viewport.getAttribute("style");
 
     await page.getByLabel("시작 상세 열기").click();
+    const sidebar = page.getByLabel("노드 상세 패널");
+    await expect(sidebar).toBeVisible();
+    const sidebarBox = await sidebar.boundingBox();
+    expect(sidebarBox?.width).toBe(360);
+    expect(sidebarBox ? Math.round(sidebarBox.x + sidebarBox.width) : 0).toBe(page.viewportSize()?.width);
     const markdown = page.getByLabel("Markdown 내용");
     await markdown.fill("# 집중 편집\n\n- 첫 항목");
     await page.getByRole("button", { name: "내보내기" }).click();

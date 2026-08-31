@@ -37,10 +37,22 @@ type NodeDetailProps = {
 
 export function NodeDetailPanel(props: NodeDetailProps) {
   const [tab, setTab] = useState<DetailTab>("edit");
-  const [panelWidth, setPanelWidth] = useState(416);
+  const [panelWidth, setPanelWidth] = useState(360);
+  const [bounds, setBounds] = useState(() => getDetailPanelBounds(1_120));
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const content = props.content;
   const effectiveDraft = props.draft ?? content.data?.node.contentMd;
+
+  useEffect(() => {
+    const updateBounds = () => {
+      const next = getDetailPanelBounds(window.innerWidth);
+      setBounds(next);
+      setPanelWidth((current) => clampPanelWidth(current, next));
+    };
+    updateBounds();
+    window.addEventListener("resize", updateBounds);
+    return () => window.removeEventListener("resize", updateBounds);
+  }, []);
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
     resizeStart.current = { x: event.clientX, width: panelWidth };
@@ -48,8 +60,7 @@ export function NodeDetailPanel(props: NodeDetailProps) {
   }
 
   function resizeBy(delta: number) {
-    const maxWidth = Math.max(320, Math.min(720, window.innerWidth - 64));
-    setPanelWidth((current) => Math.min(maxWidth, Math.max(320, current + delta)));
+    setPanelWidth((current) => clampPanelWidth(current + delta, bounds));
   }
 
   return (
@@ -59,26 +70,25 @@ export function NodeDetailPanel(props: NodeDetailProps) {
       onPointerMove={(event) => {
         if (!resizeStart.current) return;
         const nextWidth = resizeStart.current.width + resizeStart.current.x - event.clientX;
-        const maxWidth = Math.max(320, Math.min(720, window.innerWidth - 64));
-        setPanelWidth(Math.min(maxWidth, Math.max(320, nextWidth)));
+        setPanelWidth(clampPanelWidth(nextWidth, bounds));
       }}
       onPointerUp={() => { resizeStart.current = null; }}
-      className="absolute inset-y-0 right-0 z-20 flex w-full max-w-full flex-col border-l border-[var(--border)] bg-white shadow-2xl sm:w-[var(--detail-panel-width)]"
+      className="absolute inset-y-0 right-0 z-20 flex w-[var(--detail-panel-width)] max-w-[calc(100vw-1rem)] flex-col border-l border-[var(--border)] bg-white shadow-2xl"
     >
       <button
         type="button"
         role="separator"
         aria-label="노드 상세 패널 너비 조절"
         aria-orientation="vertical"
-        aria-valuemin={320}
-        aria-valuemax={720}
+        aria-valuemin={bounds.min}
+        aria-valuemax={bounds.max}
         aria-valuenow={panelWidth}
         onPointerDown={startResize}
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") resizeBy(16);
           if (event.key === "ArrowRight") resizeBy(-16);
         }}
-        className="group absolute inset-y-0 left-0 z-10 hidden w-2 -translate-x-1/2 cursor-col-resize touch-none sm:block"
+        className="group absolute inset-y-0 left-0 z-10 w-2 -translate-x-1/2 cursor-col-resize touch-none"
       >
         <span className="absolute inset-y-0 left-1/2 w-px bg-transparent transition group-hover:bg-violet-300" />
       </button>
@@ -349,4 +359,19 @@ function RecoveryPrompt({
       </div>
     </div>
   );
+}
+
+type DetailPanelBounds = Readonly<{ min: number; max: number }>;
+
+export function getDetailPanelBounds(viewportWidth: number): DetailPanelBounds {
+  const available = Math.max(0, viewportWidth - 16);
+  const min = Math.min(320, available);
+  return {
+    min,
+    max: Math.max(min, Math.min(560, viewportWidth * 0.5)),
+  };
+}
+
+function clampPanelWidth(width: number, bounds: DetailPanelBounds): number {
+  return Math.min(bounds.max, Math.max(bounds.min, width));
 }

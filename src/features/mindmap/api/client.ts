@@ -3,6 +3,8 @@ import type {
   CreateNodeResponse,
   CreateMindmapInput,
   CreateMindmapResponse,
+  BatchUpdateNodePositionsInput,
+  BatchUpdateNodePositionsResponse,
   DeleteMindmapInput,
   DeleteMindmapResponse,
   DeleteNodeInput,
@@ -141,6 +143,19 @@ export async function updateNodeCollapse(
 ): Promise<UpdateNodeResponse> {
   return parseResponse(
     await fetch(`/api/nodes/${nodeId}/collapse`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function batchUpdateNodePositions(
+  mindmapId: string,
+  input: BatchUpdateNodePositionsInput,
+): Promise<BatchUpdateNodePositionsResponse> {
+  return parseResponse(
+    await fetch(`/api/mindmaps/${mindmapId}/nodes/positions`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),

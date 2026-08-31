@@ -49,6 +49,11 @@ export type UpdateNodeResponse = Readonly<{
   node: MindmapNodeDTO;
 }>;
 
+export type BatchUpdateNodePositionsResponse = Readonly<{
+  nodes: MindmapNodeDTO[];
+  mindmapUpdatedAt: string;
+}>;
+
 export type NodeDeletionImpactResponse = Readonly<{
   node: Readonly<{ id: string; title: string }>;
   descendantCount: number;
@@ -120,6 +125,28 @@ export const updateNodeCollapseInputSchema = z.object({
   revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
 });
 
+export const batchUpdateNodePositionsInputSchema = z.object({
+  nodes: z.array(z.object({
+    id: nodeIdSchema,
+    x: z.number().finite("노드의 x 좌표가 올바르지 않습니다."),
+    y: z.number().finite("노드의 y 좌표가 올바르지 않습니다."),
+    revision: z.number().int().nonnegative("노드 revision이 올바르지 않습니다."),
+  }).strict()).min(1).max(1_000),
+}).strict().superRefine(({ nodes }, context) => {
+  const ids = new Set<string>();
+  for (const node of nodes) {
+    if (ids.has(node.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodes"],
+        message: "같은 노드의 위치를 중복해서 변경할 수 없습니다.",
+      });
+      return;
+    }
+    ids.add(node.id);
+  }
+});
+
 export const deleteMindmapInputSchema = z.object({
   expectedNodeCount: z.number().int().nonnegative("예상 노드 수가 올바르지 않습니다."),
 });
@@ -161,6 +188,7 @@ export type DeleteMindmapInput = z.infer<typeof deleteMindmapInputSchema>;
 export type CreateNodeInput = z.infer<typeof createNodeInputSchema>;
 export type UpdateNodeTitleInput = z.infer<typeof updateNodeTitleInputSchema>;
 export type UpdateNodePositionInput = z.infer<typeof updateNodePositionInputSchema>;
+export type BatchUpdateNodePositionsInput = z.infer<typeof batchUpdateNodePositionsInputSchema>;
 export type UpdateNodeCollapseInput = z.infer<typeof updateNodeCollapseInputSchema>;
 export type UpdateNodeContentInput = z.infer<typeof updateNodeContentInputSchema>;
 export type DeleteNodeInput = z.infer<typeof deleteNodeInputSchema>;

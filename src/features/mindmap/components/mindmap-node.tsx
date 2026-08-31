@@ -20,11 +20,6 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
   return (
     <div
       data-testid={data.isRoot ? "root-node" : "mindmap-node"}
-      onDoubleClick={(event) => {
-        event.stopPropagation();
-        if (data.isInteractionDisabled) return;
-        data.onStartEdit?.(id);
-      }}
       className={`min-w-40 max-w-64 rounded-2xl border px-5 py-3 text-center shadow-md transition ${
         data.isRoot
           ? "border-violet-700 bg-[var(--primary)] text-white"
@@ -84,7 +79,17 @@ export const MindmapNode = memo(function MindmapNode({ id, data, selected }: Nod
           ) : null}
         </div>
       ) : (
-        <p className={`truncate text-sm font-extrabold ${data.isRoot ? "text-white" : "text-[var(--foreground)]"}`}>{data.title}</p>
+        <p
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            if (data.isInteractionDisabled) return;
+            data.onStartEdit?.(id);
+          }}
+          className={`nodrag truncate text-sm font-extrabold ${data.isRoot ? "text-white" : "text-[var(--foreground)]"}`}
+        >
+          {data.title}
+        </p>
       )}
       {data.isRoot ? <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-violet-100">Root</p> : null}
       <div className="nodrag mt-2 flex items-center justify-center gap-1.5">
