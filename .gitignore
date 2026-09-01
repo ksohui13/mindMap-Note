@@ -12,10 +12,11 @@ src/generated/prisma/
 .DS_Store
 Thumbs.db
 
+tsconfig.tsbuildinfo
+env
+
 # Private documents
 docs/99._no_share/
 
 # User test recordings
 user_test/mp4/
-
-env
