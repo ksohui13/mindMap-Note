@@ -97,7 +97,7 @@ describe("MindmapEditor", () => {
     expect(screen.getByRole("button", { name: "축소" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "화면 맞춤" })).toBeInTheDocument();
     const canvas = screen.getByRole("region", { name: "마인드맵 캔버스" });
-    expect(canvas).toHaveAttribute("data-nodes-draggable", "true");
+    expect(canvas).toHaveAttribute("data-nodes-draggable", "false");
     expect(canvas).toHaveAttribute("data-nodes-connectable", "false");
     expect(canvas).toHaveAttribute("data-delete-enabled", "false");
     expect(screen.getByLabelText("시작 메뉴")).toBeInTheDocument();

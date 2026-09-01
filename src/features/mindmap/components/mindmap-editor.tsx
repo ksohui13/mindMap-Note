@@ -8,7 +8,6 @@ import {
   ReactFlowProvider,
   useReactFlow,
   type EdgeTypes,
-  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
 import Link from "next/link";
@@ -565,19 +564,6 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
     }
   }, [batchUpdatePositions, mindmapId, queryClient, refetchDetail, registerRevision, setNodePending, waitForNodes]);
 
-  const changeNodePositions = useCallback((changes: NodeChange<MindmapFlowNode>[]) => {
-    if (!changes.some((change) => change.type === "position" && change.position)) return;
-    setPositionOverrides((current) => {
-      const next = { ...current };
-      for (const change of changes) {
-        if (change.type === "position" && change.position) {
-          next[change.id] = change.position;
-        }
-      }
-      return next;
-    });
-  }, []);
-
   const toggleCollapse = useCallback((nodeId: string) => {
     if (nodeMutationLocks.current.has(nodeId) || !parentNodeIds.has(nodeId)) return;
     const node = effectiveNodes.find((candidate) => candidate.id === nodeId);
@@ -893,8 +879,6 @@ function MindmapEditorContent({ mindmapId, initialData, initialRootSelection = f
         onRevertMutation={revertNodeMutation}
         onRetryCreate={retryCreate}
         onDiscardCreate={discardOptimisticNode}
-        onNodesChange={changeNodePositions}
-        onNodeDragStop={persistPosition}
       />
       {detailPanelOpen && selectedNodeId ? (
         <NodeDetailPanel
@@ -1132,8 +1116,6 @@ const MindmapCanvas = memo(function MindmapCanvas({
   onRevertMutation,
   onRetryCreate,
   onDiscardCreate,
-  onNodesChange,
-  onNodeDragStop,
 }: {
   detail: MindmapDetailResponse;
   selectedNodeId: string | null;
@@ -1158,8 +1140,6 @@ const MindmapCanvas = memo(function MindmapCanvas({
   onRevertMutation: (nodeId: string) => void;
   onRetryCreate: (nodeId: string) => void;
   onDiscardCreate: (nodeId: string) => void;
-  onNodesChange: (changes: NodeChange<MindmapFlowNode>[]) => void;
-  onNodeDragStop: (nodeId: string, position: NodePosition) => void;
 }) {
   const flow = useMemo(
     () => toMindmapFlow(detail, selectedNodeId, {
@@ -1216,7 +1196,7 @@ const MindmapCanvas = memo(function MindmapCanvas({
   return (
     <section
       aria-label="마인드맵 캔버스"
-      data-nodes-draggable="true"
+      data-nodes-draggable="false"
       data-nodes-connectable="false"
       data-delete-enabled="false"
       className="relative min-h-0 flex-1"
@@ -1227,14 +1207,12 @@ const MindmapCanvas = memo(function MindmapCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={selectNode}
-        onNodesChange={onNodesChange}
-        onNodeDragStop={(_event, node) => onNodeDragStop(node.id, node.position)}
         onPaneClick={clearSelection}
         fitView
         fitViewOptions={fitViewOptions}
         minZoom={0.2}
         maxZoom={2}
-        nodesDraggable
+        nodesDraggable={false}
         nodesConnectable={false}
         onlyRenderVisibleElements={process.env.NODE_ENV !== "test"}
         elementsSelectable
