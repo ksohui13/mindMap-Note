@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { useCreateMindmap } from "@/features/dashboard/hooks/use-mindmaps";
+import type { MindmapDetailResponse } from "@/features/mindmap/api/contracts";
 import { MindmapEditor } from "@/features/mindmap/components/mindmap-editor";
+import { mindmapDetailQueryKey } from "@/features/mindmap/hooks/use-mindmap-detail";
 
 export function MindmapCreationPage({
   mindmapId,
@@ -13,8 +16,13 @@ export function MindmapCreationPage({
   mindmapId: string;
   rootNodeId: string;
 }) {
+  const queryClient = useQueryClient();
   const creation = useCreateMindmap();
   const started = useRef(false);
+  const cachedDetail = queryClient.getQueryData<MindmapDetailResponse>(
+    mindmapDetailQueryKey(mindmapId),
+  );
+  const detail = cachedDetail ?? creation.data?.detail;
 
   function create() {
     if (started.current || creation.isPending) return;
@@ -22,9 +30,6 @@ export function MindmapCreationPage({
     creation.mutate(
       { mindmapId, rootNodeId },
       {
-        onSuccess: () => {
-          window.history.replaceState(null, "", `/mindmaps/${mindmapId}`);
-        },
         onError: () => {
           started.current = false;
         },
@@ -33,16 +38,22 @@ export function MindmapCreationPage({
   }
 
   useEffect(() => {
-    create();
+    if (!cachedDetail) create();
     // The ids are immutable for this route. The ref prevents Strict Mode duplicates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mindmapId, rootNodeId]);
+  }, [cachedDetail, mindmapId, rootNodeId]);
 
-  if (creation.data) {
+  useEffect(() => {
+    if (detail) {
+      window.history.replaceState(null, "", `/mindmaps/${mindmapId}`);
+    }
+  }, [detail, mindmapId]);
+
+  if (detail) {
     return (
       <MindmapEditor
         mindmapId={mindmapId}
-        initialData={creation.data.detail}
+        initialData={detail}
         initialRootSelection
       />
     );

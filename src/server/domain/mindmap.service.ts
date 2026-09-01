@@ -13,7 +13,6 @@ import {
 } from "./mindmap.repository";
 import { validateMindmapTree } from "./mindmap-tree";
 import { normalizeTitle } from "./normalization";
-import { findUserById } from "./user.repository";
 
 const MAX_TRANSACTION_ATTEMPTS = 5;
 
@@ -74,12 +73,6 @@ export async function createMindmapWithRoot(
     ? idsOrClient
     : { mindmapId: randomUUID(), rootNodeId: randomUUID() };
   const client = isCreateMindmapIds(idsOrClient) ? providedClient : idsOrClient;
-  if (!(await findUserById(userId, client))) {
-    throw new DomainError("NOT_FOUND", "User was not found.");
-  }
-
-  const existing = await findIdempotentMindmap(ids, userId, client);
-  if (existing) return existing;
 
   for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
@@ -88,6 +81,9 @@ export async function createMindmapWithRoot(
       if (isPrismaError(error, "P2002")) {
         const concurrent = await findIdempotentMindmap(ids, userId, client);
         if (concurrent) return concurrent;
+      }
+      if (isPrismaError(error, "P2003")) {
+        throw new DomainError("NOT_FOUND", "User was not found.", error);
       }
       const retryable = isPrismaError(error, "P2034") || isPrismaError(error, "P2002");
 

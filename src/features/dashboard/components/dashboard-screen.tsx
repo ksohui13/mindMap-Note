@@ -1,16 +1,18 @@
 "use client";
 
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { KeyboardEvent, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { LogoutButton } from "@/features/auth/components/logout-button";
 import {
   useDeleteMindmap,
+  useCreateMindmap,
   useMindmaps,
   useRenameMindmap,
 } from "@/features/dashboard/hooks/use-mindmaps";
-import type { MindmapSummaryDTO } from "@/features/mindmap/api/contracts";
+import type { CreateMindmapInput, MindmapSummaryDTO } from "@/features/mindmap/api/contracts";
 import { ExportModal, type ExportPreparationResult } from "@/features/mindmap/components/export-modal";
 import {
   findUnresolvedExportDrafts,
@@ -30,14 +32,42 @@ export function formatMindmapUpdatedAt(value: string) {
 export function DashboardScreen({ user }: { user: { email: string } }) {
   const router = useRouter();
   const mindmaps = useMindmaps();
+  const createMindmap = useCreateMindmap();
   const createInFlight = useRef(false);
+  const creationTarget = useRef<{
+    input: CreateMindmapInput;
+    href: string;
+  } | null>(null);
 
-  function handleCreate() {
-    if (createInFlight.current) return;
-    createInFlight.current = true;
+  function getCreationTarget() {
+    if (creationTarget.current) return creationTarget.current;
     const mindmapId = crypto.randomUUID();
     const rootNodeId = crypto.randomUUID();
-    router.push(`/mindmaps/${mindmapId}?rootNodeId=${rootNodeId}&initialEdit=1&create=1`);
+    creationTarget.current = {
+      input: { mindmapId, rootNodeId },
+      href: `/mindmaps/${mindmapId}?rootNodeId=${rootNodeId}&initialEdit=1&create=1`,
+    };
+    return creationTarget.current;
+  }
+
+  useEffect(() => {
+    router.prefetch(getCreationTarget().href);
+    // The target is created once and remains stable for this Dashboard mount.
+  }, [router]);
+
+  function handleCreate() {
+    if (createInFlight.current || createMindmap.isPending) return;
+    createInFlight.current = true;
+    createMindmap.reset();
+    const target = getCreationTarget();
+    createMindmap.mutate(target.input, {
+      onSuccess: () => {
+        router.push(target.href);
+      },
+      onError: () => {
+        createInFlight.current = false;
+      },
+    });
   }
 
   return (
@@ -67,13 +97,21 @@ export function DashboardScreen({ user }: { user: { email: string } }) {
             <h1 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">내 마인드맵</h1>
             <p className="mt-2 text-sm text-[var(--muted)]">전체 {mindmaps.data?.mindmaps.length ?? 0}개</p>
           </div>
-          <button
-            type="button"
-            onClick={handleCreate}
-            className="rounded-xl bg-[var(--primary)] px-5 py-3 font-bold text-white shadow-lg shadow-violet-200 transition hover:bg-[var(--primary-strong)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            + 새 마인드맵
-          </button>
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={createMindmap.isPending}
+              className="rounded-xl bg-[var(--primary)] px-5 py-3 font-bold text-white shadow-lg shadow-violet-200 transition hover:bg-[var(--primary-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {createMindmap.isPending ? "마인드맵 만드는 중…" : "+ 새 마인드맵"}
+            </button>
+            {createMindmap.isError ? (
+              <p role="alert" className="text-sm font-semibold text-[var(--danger)]">
+                마인드맵을 만들지 못했습니다. 다시 시도해 주세요.
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-9">
@@ -230,29 +268,47 @@ function MindmapCard({ mindmap }: { mindmap: MindmapSummaryDTO }) {
             <Link href={`/mindmaps/${mindmap.id}`} className="min-w-0 flex-1 truncate text-left text-lg font-extrabold hover:text-[var(--primary)]">{mindmap.title}</Link>
           )}
           {!editing ? (
-            <details className="relative">
-              <summary aria-label={`${mindmap.title} 메뉴`} className="grid size-8 cursor-pointer list-none place-items-center rounded-lg text-lg text-[var(--muted)] hover:bg-[var(--background)]">⋯</summary>
-              <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border border-[var(--border)] bg-white p-1 shadow-lg">
-                <button type="button" onClick={beginRename} className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--background)]">이름 변경</button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
                 <button
                   type="button"
-                  onClick={() => setExportOpen(true)}
-                  className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[var(--background)]"
+                  aria-label={`${mindmap.title} 메뉴`}
+                  className="grid size-8 place-items-center rounded-lg text-lg text-[var(--muted)] hover:bg-[var(--background)]"
                 >
-                  Markdown 내보내기
+                  ⋯
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    deleteMindmap.reset();
-                    setDeleteOpen(true);
-                  }}
-                  className="w-full rounded-md px-3 py-2 text-left text-sm font-bold text-[var(--danger)] hover:bg-red-50"
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={4}
+                  collisionPadding={8}
+                  className="z-[80] w-40 rounded-lg border border-[var(--border)] bg-white p-1 text-left shadow-xl"
                 >
-                  삭제
-                </button>
-              </div>
-            </details>
+                  <DropdownMenu.Item
+                    onSelect={beginRename}
+                    className="w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm outline-none hover:bg-[var(--background)] focus:bg-[var(--background)]"
+                  >
+                    이름 변경
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() => setExportOpen(true)}
+                    className="w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm outline-none hover:bg-[var(--background)] focus:bg-[var(--background)]"
+                  >
+                    Markdown 내보내기
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() => {
+                      deleteMindmap.reset();
+                      setDeleteOpen(true);
+                    }}
+                    className="w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm font-bold text-[var(--danger)] outline-none hover:bg-red-50 focus:bg-red-50"
+                  >
+                    삭제
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           ) : null}
         </div>
         {error ? <p role="alert" className="mt-1 text-xs text-[var(--danger)]">{error}</p> : null}

@@ -25,14 +25,14 @@ test.describe("dashboard lifecycle", () => {
     await expect(page.getByText("전체 2개")).toBeVisible();
 
     await page.getByLabel("새로운 마인드맵 2 메뉴").click();
-    await page.getByRole("button", { name: "이름 변경" }).click();
+    await page.getByRole("menuitem", { name: "이름 변경" }).click();
     const titleInput = page.getByRole("textbox", { name: "마인드맵 이름" });
     await titleInput.fill("고객 인터뷰 정리");
     await titleInput.press("Enter");
     await expect(page.getByText("고객 인터뷰 정리")).toBeVisible();
 
     await page.getByLabel("고객 인터뷰 정리 메뉴").click();
-    await page.getByRole("button", { name: "Markdown 내보내기" }).click();
+    await page.getByRole("menuitem", { name: "Markdown 내보내기" }).click();
     const exportDialog = page.getByRole("dialog", { name: "Markdown 내보내기" });
     await expect(exportDialog.getByLabel("전체 마인드맵")).toBeChecked();
     await expect(exportDialog.getByLabel("현재 노드만")).toBeDisabled();
@@ -45,7 +45,7 @@ test.describe("dashboard lifecycle", () => {
     expect(await readFile(exportPath, "utf8")).toContain("# 고객 인터뷰 정리");
 
     await page.getByLabel("고객 인터뷰 정리 메뉴").click();
-    await page.getByRole("button", { name: "삭제", exact: true }).click();
+    await page.getByRole("menuitem", { name: "삭제", exact: true }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("포함된 노드 1개");
     await dialog.getByRole("button", { name: "삭제", exact: true }).click();

@@ -12,6 +12,12 @@ async function createTestUser(email: string) {
 }
 
 describe("createMindmapWithRoot", () => {
+  it("rejects a missing user through the foreign-key boundary", async () => {
+    await expect(
+      createMindmapWithRoot(randomUUID(), integrationClient),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("creates the numbered mindmap and root atomically", async () => {
     const user = await createTestUser("atomic@example.test");
     const created = await createMindmapWithRoot(user.id, integrationClient);
